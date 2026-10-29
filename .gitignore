@@ -1,0 +1,12 @@
+# Tokens are secrets
+*.token
+
+# OS files
+.DS_Store
+
+# Built binaries and test output
+/cheesedb
+/cmd/cheesedb/cheesedb
+*.test
+*.out
+*.prof
