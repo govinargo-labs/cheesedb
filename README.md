@@ -108,12 +108,21 @@ model    = your-model-name
 # api_key = your-key        (only if your server needs one)
 ```
 
-The demo tells one story three ways. An agent learns from a user message, a web page and a weather tool. Then the weather tool turns out to be wrong. The demo compares:
-- **a naive memory list:** the derived memories stay, and the model still answers from them;
-- **cheesedb with `Untrusted`:** the model no longer sees them, but their text is still on disk;
-- **cheesedb with `Erase`:** the text is gone from the files.
+The demo tells one story three ways. An agent learns from a user message, a web page and a weather tool. Then the weather tool turns out to be wrong. Here is a real run:
 
-`find` searches the raw bytes to prove it.
+<p align="center"><img src="docs/demo.png" alt="Output of cheesedb demo: an agent learns from three sources, the weather tool is removed three ways, and a table compares whether the model still uses the bad data and whether the bad text is still in the files" width="760"></p>
+
+**How to read it**
+1. **Three sources arrive.** Each one is stored as a lot with a label: `user_message`, `web_page`, `weather_tool`.
+2. **The model learns memories and says where each came from.** The arrow on the right lists the sources: memory `[6]` came from `[3]`, the weather tool. Memory `[7]` was built on `[4]` and `[6]`.
+3. **Ask a question.** The model sees all 4 memories and answers from the weather forecast.
+4. **The weather tool was wrong, so remove source `[3]` three ways:**
+   - **A, a naive memory list.** It deletes the source and nothing else. The model still sees the memories built from it, and gives the same answer.
+   - **B, cheesedb with `Untrusted`.** One call removes `[3]` and everything learned from it, `[6]` and `[7]`. The model sees only 2 memories, so it no longer knows the forecast. The text is still in the files, and the demo finds the word "rain" in 3 places.
+   - **C, cheesedb with `Erase`.** The model sees the same 2 memories, and the text is gone from the files. A search of every byte finds nothing.
+5. **The table sums it up:** does the model still use the bad data, and is the bad text still on disk?
+
+`cheesedb find` runs the same byte-by-byte search, so you can check your own data.
 
 ## Concepts
 
