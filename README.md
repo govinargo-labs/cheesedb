@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/logo.png" alt="CheeseDB logo: a stack of cheese wheels shaped like a database" width="260"></p>
 
-# cheesedb
+# CheeseDB
 
 **Agent memory with a recall button.**
 Every memory knows its sources. Recall a bad source, and everything learned from it goes too.
