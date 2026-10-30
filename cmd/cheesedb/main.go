@@ -116,6 +116,7 @@ Removing
 
 Checking
   cheesedb verify <agent>                     check the whole log, print the head fingerprint
+  cheesedb version                            print the version of this command
 
 With an LLM (any OpenAI-compatible server, set in <home>/llm.conf; see llm.go)
   cheesedb learn <agent>                      the LLM turns live sources into memories
@@ -168,6 +169,9 @@ func run(args []string) error {
 	}
 
 	switch cmd {
+	case "version":
+		fmt.Println("cheesedb", version())
+		return nil
 	case "demo":
 		return demo()
 	case "agent":
