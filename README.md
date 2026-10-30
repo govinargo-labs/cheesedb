@@ -7,6 +7,8 @@ Every memory knows its sources. Recall a bad source, and everything learned from
 
 An embedded, append-only, hash-chained memory database for AI agents, written in Go with the standard library only.
 
+Website: **[cheesedb.dev](https://cheesedb.dev)**
+
 > **Status: preview (v0.1.0).** cheesedb is in active development. It has not yet had an independent security review, and the API and on-disk format may change before v1.0, so it is not yet recommended for production data. See [Limits](#limits) and the [changelog](CHANGELOG.md).
 
 ## Why cheesedb
