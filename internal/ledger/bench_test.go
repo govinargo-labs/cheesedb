@@ -275,6 +275,35 @@ func BenchmarkRecallCascade(b *testing.B) {
 	}
 }
 
+// BenchmarkRecallLarge is a full, durable Recall that removes 10,000
+// memories, on the 1M ledger, measured end to end. Each iteration first adds
+// its probe through the API, which is 10,001 durable writes (about 48 s)
+// with the timer stopped, so it only runs when asked, with a fixed count:
+//
+//	CHEESEDB_BENCH_LARGE=1 go test -run '^$' -bench RecallLarge -benchtime=3x ./internal/ledger/
+//
+// (Without -benchtime=Nx, Go would repeat the slow setup hundreds of times.)
+func BenchmarkRecallLarge(b *testing.B) {
+	if os.Getenv("CHEESEDB_BENCH_LARGE") == "" {
+		b.Skip("slow: set CHEESEDB_BENCH_LARGE=1 and -benchtime=3x (see the comment)")
+	}
+	b.Run("1M/removes-10000", func(b *testing.B) {
+		l := openBench(b, dataset(b, 1_000_000))
+		defer l.Close()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			p := addProbe(l, 5000)
+			b.StartTimer()
+			removed, err := l.Recall(p, Fair, Untrusted)
+			if err != nil || len(removed) != 10000 {
+				b.Fatalf("removed %d, err %v; want 10000", len(removed), err)
+			}
+		}
+	})
+}
+
 func addProbeToState(b *testing.B, s *state, width int) ID {
 	first := ID(len(s.nodes)) + 1
 	for i, op := range benchgen.Probe(uint64(first), width) {

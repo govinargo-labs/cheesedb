@@ -29,26 +29,26 @@ Deleting that source is not enough. Everything the agent *learned* from it stays
 - **Agents are isolated by design.** Each agent is reached only through its own token. No method takes another agent's name, so a prompt-injected tool holding one agent's handle has no way to reach another.
 - **Embedded and dependency-free.** A Go library and a folder on disk: no server, no external dependencies.
 
-### Why not SQLite or PostgreSQL?
+### Why not SQLite, PostgreSQL or a graph database?
 
-You can model sources and memories in SQL. We did, to compare: the same data and the same algorithm on all three engines, with the same durability (every write flushed to the physical disk before it is acknowledged).
+You can model sources and memories in SQL, or as a graph in Neo4j. We did both, to compare: the same data on all four engines, with the same durability (every write flushed to the physical disk before it is acknowledged).
 
-**Benchmarks** with 1M memories per agent, median of 3 runs, on an Apple M1 Max (macOS, internal SSD), SQLite 3.53 and PostgreSQL 17. Full results, method and caveats: [BENCHMARKS.md](BENCHMARKS.md).
+**Benchmarks** with 1M memories per agent, median of 3 runs, on an Apple M1 Max (macOS, internal SSD), SQLite 3.53, PostgreSQL 17 and Neo4j Community 2026.10. Full results, method and caveats: [BENCHMARKS.md](BENCHMARKS.md).
 
-| | cheesedb | SQLite | PostgreSQL |
-|---|---|---|---|
-| Recall that removes 10,000 memories | **~5 ms**¹ | 230 ms | 1.73 s |
-| Recall that removes 20 memories | **4.9 ms** | 7.3 ms | 10.6 ms |
-| Read one memory by id | **1.5 µs** | 7.1 µs | 43.9 µs |
-| Durable write (one memory) | **4.8 ms** | 5.2 ms | 6.3 ms |
-| Startup, ready for the first query | 679 ms | **0.1 ms** | 2.8 ms |
-| Disk per memory | 314 B | **249 B** | 546 B |
-| RAM per memory while open | 205 B | page cache only | shared buffers only |
+| | cheesedb | SQLite | PostgreSQL | Neo4j |
+|---|---|---|---|---|
+| Recall that removes 10,000 memories | **5.5 ms** | 235 ms | 1.82 s | 67 ms |
+| Recall that removes 20 memories | **4.8 ms** | 7.1 ms | 10.5 ms | 6.8 ms |
+| Read one memory by id | **1.6 µs** | 7.0 µs | 44 µs | 179 µs |
+| Durable write (one memory) | **4.7 ms** | 5.3 ms | 6.6 ms | 6.3 ms |
+| Startup, ready for the first query | 667 ms | **0.1 ms** | 2.7 ms | 1.0 ms¹ |
+| Disk per memory | 314 B | **249 B** | 546 B | 496 B |
+| RAM per memory while open | 205 B | page cache only | shared buffers only | JVM heap and page cache |
 
-¹ One measured durable write (4.9 ms) plus the measured in-memory walk (0.11 ms); running the full setup through the API would cost 10,001 disk flushes per run. PostgreSQL ran over TCP on localhost, which adds a round trip to each statement.
+¹ A new connection to a server that is already running; booting the Neo4j server took 6.5 to 8.2 s. PostgreSQL and Neo4j ran over TCP on localhost, which adds a round trip to each statement. We wrote the Neo4j model and queries ourselves, and an expert may do better.
 
-- **Recall is where it wins.** cheesedb keeps the dependency graph in memory and removes 10,000 memories with one write. The SQL versions run several statements for each affected memory.
-- **The rules live in the engine, not in your code.** No memory without a source, no memory built on a recalled source, recalls are permanent, agents cannot see each other. With SQL you write and test these yourself.
+- **Recall is where it wins.** cheesedb keeps the dependency graph in memory and removes 10,000 memories with one write: about 12x faster than Neo4j, 43x faster than SQLite and 330x faster than PostgreSQL. The SQL versions run several statements for each affected memory. A graph database fits the job better, and Neo4j is the closest competitor, but it is still slower.
+- **The rules live in the engine, not in your code.** No memory without a source, no memory built on a recalled source, recalls are permanent, agents cannot see each other. With SQL or a graph database you write and test these yourself.
 - **Erasure is built in.** In a general database, a deleted row's bytes can stay in the files (free pages, the write-ahead log) until a vacuum or checkpoint. cheesedb's `Erase` rewrites the file without them before it returns.
 - **Writes are about even,** because the disk flush dominates for every engine.
 
