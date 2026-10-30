@@ -8,6 +8,7 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 - **A fuzz test for the record decoder** (`FuzzDecode`): `Decode` must never panic on any bytes, every failure must be a documented error, and anything it accepts must encode back to the same bytes. Run it with `go test -fuzz=FuzzDecode ./internal/record`.
 
 - **Benchmarks now include Neo4j** (a graph database), and the 10,000-memory recall is measured end to end instead of computed. See [BENCHMARKS.md](BENCHMARKS.md).
+- **The website is now at [cheesedb.dev](https://cheesedb.dev).**
 
 ## v0.1.0 (preview)
 
