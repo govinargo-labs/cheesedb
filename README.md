@@ -181,7 +181,7 @@ Planned work, roughly in order. Plans can change, and nothing here is a promise 
 
 **Toward v1.0** (a stable API and on-disk format)
 - **Windows support.** The file lock already works; directory flushing and replacing an open file during `Erase` are the gaps.
-- **Fuzzing and crash tests.** Feed damaged and truncated files to `Open` and kill the process mid-write, to check recovery.
+- **More fuzzing and crash tests.** The record decoder already has a fuzz test. Still to do: feed damaged and truncated files to `Open`, and kill the process mid-write, to check recovery.
 - **Independent security review** before anything is recommended for real data.
 - **Batch commit markers,** so recovery can tell a half-written last batch from older damage exactly (see [Limits](#limits)).
 

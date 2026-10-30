@@ -2,6 +2,11 @@
 
 cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the API and the on-disk format may change between minor versions.
 
+## Unreleased
+
+- **`cheesedb version`** prints the version of the command, for example `cheesedb v0.1.0`.
+- **A fuzz test for the record decoder** (`FuzzDecode`): `Decode` must never panic on any bytes, every failure must be a documented error, and anything it accepts must encode back to the same bytes. Run it with `go test -fuzz=FuzzDecode ./internal/record`.
+
 ## v0.1.0 (preview)
 
 First public preview. Not yet independently reviewed, and not yet recommended for production data (see [Limits](README.md#limits)).
