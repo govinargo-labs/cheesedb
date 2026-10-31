@@ -428,23 +428,24 @@ func TestEmptyActiveSegmentIsFine(t *testing.T) {
 // log refuses all further writes, even once the problem is gone (no
 // retries). A reopen recovers, with every acknowledged record intact.
 func TestFailedRolloverBreaksLog(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
 	dir := t.TempDir()
 	l, _, _ := mustOpen(t, dir, small)
 	mustAppend(t, l, big("r1"))
 	mustAppend(t, l, big("r2")) // segment 1 is now full
 
-	// A read-only directory makes creating segment 2 fail.
-	if err := os.Chmod(dir, 0o500); err != nil {
+	// A directory sitting where segment 2 belongs makes createSegment fail
+	// the same way on every OS. A read-only parent directory does not: it
+	// is honoured on Unix but ignored for folders on Windows.
+	blocked := segPath(dir, 2)
+	if err := os.Mkdir(blocked, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 	if _, err := l.Append(record.TypeLot, []byte(big("r3"))); !errors.Is(err, ErrBroken) {
 		t.Fatalf("Append needing a new segment = %v, want ErrBroken", err)
 	}
-	os.Chmod(dir, 0o700)
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := l.Append(record.TypeLot, []byte("small")); !errors.Is(err, ErrBroken) {
 		t.Fatalf("Append after a failed rollover = %v, want ErrBroken until reopen", err)
 	}
