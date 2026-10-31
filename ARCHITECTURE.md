@@ -337,6 +337,7 @@ Ledger ready (Report says what was replayed or cut)
 - When the next batch would not fit in the active segment, the segment is **sealed**: nothing is ever appended to it again. The next segment is created, and the directory is fsynced so the new file survives a crash. A batch never spans two segments.
 - Sealing writes a **seal file** next to the segment (`000001.seal` for `000001.seg`) BEFORE the next segment is created; see "Seal files" below. The segment's records need no extra fsync, because every batch was already fsynced. Sealed segments are opened read-only.
 - If creating the next segment fails, the log is broken until reopened, the same rule as a failed write (section 6).
+- On Windows, every directory fsync is skipped: `os.File.Sync` on a directory returns "Access is denied", so `syncDir` is a no-op there (README Limits). That covers the directory entries for new segments, renames and seal files. NTFS journals metadata, but those entries are not guaranteed on disk when the call returns.
 - Records are never edited in place. The only rewrite is redaction (section 7), and it rewrites a single segment.
 - Record types: `1 = LOT`, `2 = MEMORY`, `3 = RECALL`.
 - IDs are 1, 2, 3, ... per agent and assigned by the log, never by a caller. A record's parents always have smaller IDs, so ID order is a topological order.

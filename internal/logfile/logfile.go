@@ -339,15 +339,6 @@ func createSegment(dir string, n int) (*os.File, error) {
 	return f, nil
 }
 
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
-}
-
 // replay reads every segment in order, checks ids run 1, 2, 3, ... and the
 // hash chain links every record to the one before, across all segments,
 // builds the offset table and hands each record to fn. lastSealed says the
