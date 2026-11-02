@@ -122,6 +122,11 @@ With an LLM (any OpenAI-compatible server, set in <home>/llm.conf; see llm.go)
   cheesedb learn <agent>                      the LLM turns live sources into memories
   cheesedb ask <agent> "<question>"           the LLM answers from live memories only
   cheesedb demo                               the full story, compared with a naive store
+
+For AI apps (MCP)
+  cheesedb mcp <agent>                        serve the agent's memory as tools; the app
+                                              starts it, e.g.
+                                              claude mcp add cheesedb -- cheesedb mcp alice
 `
 
 func main() {
@@ -174,6 +179,11 @@ func run(args []string) error {
 		return nil
 	case "demo":
 		return demo()
+	case "mcp":
+		if len(args) < 1 {
+			return errors.New("use: cheesedb mcp <agent>  (started by an MCP app, not by hand)")
+		}
+		return mcpCommand(args[0])
 	case "agent":
 		if len(args) < 2 || (args[0] != "create" && args[0] != "delete") {
 			return errors.New("use: cheesedb agent create <agent>  or  cheesedb agent delete <agent>")
@@ -210,7 +220,7 @@ func run(args []string) error {
 		return err
 	case "remember":
 		if len(args) < 2 {
-			return errors.New(`remember needs <agent> "<text>" <leg>...`)
+			return errors.New(`remember needs <agent> "<text>" and at least one <leg>`)
 		}
 		legs, err := parseLegs(args[1:])
 		if err != nil {

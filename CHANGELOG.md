@@ -4,6 +4,8 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 
 ## Unreleased
 
+- **A local MCP server: `cheesedb mcp <agent>`.** Claude Code, Cursor and other MCP apps can use one agent's memory with no code, through five tools (`add_lot`, `remember`, `recall`, `get`, `list_memories`), over standard input and output. No tool takes an agent id. `recall` erases the text from disk unless told otherwise, and `get` never shows the text of a recalled item. A model that can run shell commands can still bypass the tools; see [Use from AI apps](README.md#use-from-ai-apps-mcp) and [THREAT_MODEL.md](THREAT_MODEL.md).
+- **CI runs `staticcheck` and `govulncheck`** in a separate `lint` job, and the workflow's token is read-only.
 - **`cheesedb version`** prints the version of the command, for example `cheesedb v0.1.0`.
 - **A fuzz test for the record decoder** (`FuzzDecode`): `Decode` must never panic on any bytes, every failure must be a documented error, and anything it accepts must encode back to the same bytes. Run it with `go test -fuzz=FuzzDecode ./internal/record`.
 
