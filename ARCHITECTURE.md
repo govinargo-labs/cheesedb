@@ -52,11 +52,17 @@ cheesedb/             module github.com/govinargo-labs/cheesedb
   internal/record/    one record <-> bytes. No files; pure functions.
   internal/logfile/   the segments: Append + fsync, replay on Open, torn-tail recovery.
   internal/ledger/    memory logic: lots, legs, recall. state.go is the pure in-memory graph.
+  internal/tools/     the five model-facing tools (add_lot, remember, recall, get,
+                      list_memories): JSON schemas plus the code that runs one call on one
+                      agent handle. No tool takes an agent. Knows nothing about MCP.
   internal/benchgen/  the shared benchmark workload
-  bench/              separate module: SQLite and PostgreSQL comparison
+  bench/              separate module: SQLite, PostgreSQL and Neo4j comparison
   cmd/cheesedb/       the `cheesedb` command: tries every feature, plus an LLM demo
                       (`go install ./cmd/cheesedb`, then `cheesedb help`). Keeps its
                       data in ~/.cheesedb or $CHEESEDB_DIR. Not part of the library.
+                      `cheesedb mcp <agent>` (mcp.go) serves internal/tools to an MCP
+                      app over stdin/stdout, one JSON-RPC message per line, and opens
+                      the store only for the length of each tool call.
 ```
 
 Encoding is kept separate from file I/O so every byte of the format can be tested without touching the disk. `internal/` prevents other modules importing the building blocks directly.

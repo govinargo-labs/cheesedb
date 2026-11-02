@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# The jobs only read the code, so the token needs no write access.
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -24,3 +28,22 @@ jobs:
           cache: false # no dependencies, so no go.sum to key a cache on
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+
+  # Static analysis and known-vulnerability scan. Ubuntu only: the results do
+  # not depend on the OS. The tools are installed here at pinned versions and
+  # are not part of go.mod, so the module stays free of dependencies.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # Latest patch release, not the go.mod version: govulncheck also
+          # scans the standard library of the Go that builds the code, and
+          # go.mod only sets the minimum version.
+          go-version: stable
+          cache: false # no dependencies, so no go.sum to key a cache on
+      - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2 # 2026.2.2
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - run: staticcheck ./...
+      - run: govulncheck ./...

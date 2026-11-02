@@ -126,6 +126,39 @@ The demo tells one story three ways. An agent learns from a user message, a web 
 
 `cheesedb find` runs the same byte-by-byte search, so you can check your own data.
 
+## Use from AI apps (MCP)
+
+`cheesedb mcp <agent>` serves one agent's memory to any app that speaks the [Model Context Protocol](https://modelcontextprotocol.io) (Claude Code, Cursor, Claude Desktop and others), with no code. The app starts it and talks to it over standard input and output; nothing listens on a network port.
+
+```
+cheesedb agent create alice                      # once; the token is saved in ~/.cheesedb/tokens
+claude mcp add cheesedb -- cheesedb mcp alice    # Claude Code
+```
+
+For apps with a settings file (Cursor, Claude Desktop), add the same command:
+
+```json
+{ "mcpServers": { "cheesedb": { "command": "cheesedb", "args": ["mcp", "alice"] } } }
+```
+
+The model gets five tools:
+
+| Tool | What it does |
+|---|---|
+| `add_lot` | Registers a new outside source (a user message, a web page, a tool result) and returns its id. |
+| `remember` | Stores something learned, with `legs`: the ids of the lots or memories it came from. |
+| `recall` | Removes a lot or memory and everything that depended on it. The text is erased from disk unless the model passes `erase: false`. |
+| `get` | Reads one lot or memory by id. The text of a recalled item is never shown. |
+| `list_memories` | Lists the memories still alive, newest first, in pages. |
+
+The agent is fixed by the command line, and no tool takes an agent, so the model cannot switch to another agent through the tools. A tool that fails (an unknown id, a recalled parent) returns its reason to the model, which can correct its next call.
+
+Things to know before you rely on it:
+- **The model declares the sources and legs itself.** A recall is only as complete as the legs it wrote, and a prompt-injected model can declare them wrongly or recall things it should not (see [Limits](#limits)).
+- **A model that can also run shell commands as you can skip the tools** and read every agent's files directly. Isolation holds only when the tools are the model's only way to the data. For real separation, the data would have to belong to another OS user, which is what the planned memory server is for.
+- **Each tool call opens the store and closes it again**, so a second app window or the `cheesedb` command can use it in between. The cost is the replay time under [Limits](#limits): small for a young agent, about 0.7 s per call at 1M memories.
+- Data lives in `~/.cheesedb`, or in `CHEESEDB_DIR` if the app starts the command with that variable set, as for every `cheesedb` command.
+
 ## Concepts
 
 - **Lot:** a source the agent learned from (a user message, a web page, a tool result). The caller labels it; cheesedb does not judge sources.
@@ -158,6 +191,7 @@ Read these before relying on cheesedb.
   The files alone cannot reveal any of these. `Verify()` returns a **head fingerprint**: keep a copy somewhere else, and compare it later to detect them. v2 plans signed records and an external witness.
 - **Isolation stops mistakes and prompt injection, not the host program.** A tool or agent holding Alice's handle cannot reach Bob. But the program that holds the store, or anyone with access to the folder as that OS user, can read every agent's files directly.
 - **Tokens are shown once.** The store keeps only a hash of each token. A lost token cannot be recovered; the agent can only be deleted.
+- **Over MCP the model is not trusted, but it is powerful.** It can add lots, declare legs, and recall (and by default erase) anything in its agent. An app that gives the model a shell lets it bypass the tools altogether. See [Use from AI apps](#use-from-ai-apps-mcp).
 
 **Data**
 - **Legs are declared by the caller.** Recall removes exactly what the declared legs say depends on a source. If a memory was really learned from a source but no leg says so, recalling that source will not remove it.
@@ -188,6 +222,9 @@ Planned work, roughly in order. Plans can change, and nothing here is a promise 
 - **Independent security review** before anything is recommended for real data.
 - **Batch commit markers,** so recovery can tell a half-written last batch from older damage exactly (see [Limits](#limits)).
 
+**Use from AI apps** (moved forward from the memory server, for ease of use)
+- **A local MCP server** (`cheesedb mcp`), so Claude Code, Cursor and other MCP apps, and agent frameworks in any language, can use cheesedb with no code. It runs on the user's machine over stdio, serves one agent chosen when it starts, and its tools never accept an agent id (see [Use from AI apps](#use-from-ai-apps-mcp)). The full memory server below stays planned for v2.
+
 **Next**
 - **Shared memory between agents.** A shared space with named members and roles (read, write, admin), every record showing who wrote it, and a way to carry a recall of a shared memory into the private memories built on it. Design in progress.
 - **Automatic compaction,** for example when dead text passes a size threshold. Today `Compact()` runs only when you call it.
@@ -198,7 +235,7 @@ Planned work, roughly in order. Plans can change, and nothing here is a promise 
 - **Read tracking:** what an agent read while answering becomes part of what its new memories depend on.
 - **Trust levels per source type,** set by a rule table you configure.
 - **Signed records and signed head fingerprints,** sent to an outside witness, so edits by someone with file access can be detected (see [Limits](#limits)).
-- An MCP server, whose tools never accept an agent id.
+- The MCP server moves onto the memory server, so several apps share one running process.
 
 **Search** (v2.5)
 - Keyword search, then semantic search through an interface where you supply the embeddings. Every result is checked against recall, so a removed memory never comes back.
