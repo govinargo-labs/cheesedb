@@ -142,6 +142,27 @@ After both recalls, only the user's own words and the memory they support remain
 | 7 | Recall of record 3 | Recall record | No content |
 | 8 | Recall of record 2 | Recall record | No content |
 
+## Search vectors: the same records, in their own log
+
+If the agent has a search index, each memory also has a vector: a list of numbers (768 of them, about 3 KB) from an embedding model, so it can be found by meaning. Vectors live in the index's own folder, `index-<name in hex>/`, in a log with the same rules as this one: records are only added, each is sealed to the one before it, and files are sealed when full.
+
+**A vector for memory 4**
+
+```text
+#1  VECTOR                        (in index-64656661756c74/, the index "default")
+  header:     id 1 · sealed to: start of the index log
+  structure:  target = 4 · tag = the first 8 bytes of record 4's seal
+  content:    768 numbers
+```
+
+The tag ties the vector to this exact memory 4, so a vector can never be matched to the wrong history.
+
+What the two recalls do to vectors:
+
+- Record 7 (untrusted): the vectors of memories 5 and 6 leave the search at once, so a search never returns them. Their numbers stay on disk, like their text, until a compaction.
+- Record 8 (erase): an erase removes vectors the same way it removes text, and vectors first. Memory 4 survives, so its vector stays.
+- A vector can be turned back into an approximation of its text, so cheesedb erases it whenever it erases the text.
+
 ## Four things to notice
 
 1. Records are only ever added. Even a recall is a new record; nothing is edited in place.

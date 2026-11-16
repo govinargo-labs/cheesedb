@@ -30,14 +30,47 @@ func newAgent(t *testing.T) *cheesedb.Agent {
 	return a
 }
 
-// call runs a tool and fails the test on an error.
+// hostFor serves the tools from an agent the test has open, with embedding
+// model e (nil for none).
+func hostFor(a *cheesedb.Agent, e Embedder) Host {
+	return Host{Open: func() (*cheesedb.Agent, func(), error) { return a, func() {}, nil }, Embed: e}
+}
+
+// call runs a tool and fails the test on an error. A recall is confirmed
+// with the code from its preview, as a model does once the user agrees.
 func call(t *testing.T, a *cheesedb.Agent, name, args string) string {
 	t.Helper()
-	out, err := Call(a, name, []byte(args))
+	out, err := confirmed(hostFor(a, nil), name, args)
 	if err != nil {
 		t.Fatalf("%s %s: %v", name, args, err)
 	}
 	return out
+}
+
+func confirmed(h Host, name, args string) (string, error) {
+	out, err := Call(h, name, []byte(args))
+	if err != nil || name != "recall" {
+		return out, err
+	}
+	code := confirmCode(out)
+	if code == "" {
+		return out, fmt.Errorf("recall gave no preview: %q", out)
+	}
+	return Call(h, name, []byte(withConfirm(args, code)))
+}
+
+// confirmCode returns the code a recall preview ends with, or "".
+func confirmCode(preview string) string {
+	_, code, ok := strings.Cut(preview, `confirm "`)
+	if !ok || len(code) < 12 {
+		return ""
+	}
+	return code[:12]
+}
+
+// withConfirm adds "confirm":code to a JSON object of arguments.
+func withConfirm(args, code string) string {
+	return strings.TrimSuffix(args, "}") + `,"confirm":"` + code + `"}`
 }
 
 // The reference example from the README, driven only through the tools,
@@ -133,7 +166,7 @@ func TestBadCallsAreErrors(t *testing.T) {
 		{"list_memories", `{"limit":500}`},          // limit too big
 	}
 	for _, b := range bad {
-		if out, err := Call(a, b.tool, []byte(b.args)); err == nil {
+		if out, err := Call(hostFor(a, nil), b.tool, []byte(b.args)); err == nil {
 			t.Errorf("%s %s: no error, got %q", b.tool, b.args, out)
 		}
 	}
@@ -168,9 +201,14 @@ func TestListMemoriesPaging(t *testing.T) {
 }
 
 // Every schema must be valid JSON, or a client would reject the tool list.
+// search is listed only with an embedding model.
 func TestListSchemas(t *testing.T) {
+	if n := len(List(Host{})); n != 5 {
+		t.Errorf("without a model: %d tools, want 5", n)
+	}
+	h := hostFor(nil, &wordEmbedder{})
 	seen := map[string]bool{}
-	for _, tool := range List() {
+	for _, tool := range List(h) {
 		var v map[string]any
 		if err := json.Unmarshal(tool.InputSchema, &v); err != nil {
 			t.Errorf("%s: schema is not valid JSON: %v", tool.Name, err)
@@ -180,11 +218,11 @@ func TestListSchemas(t *testing.T) {
 		}
 		seen[tool.Name] = true
 		// Call must know every listed tool.
-		if _, err := Call(nil, tool.Name, []byte(`not json`)); err != nil && strings.HasPrefix(err.Error(), "unknown tool") {
+		if _, err := Call(h, tool.Name, []byte(`not json`)); err != nil && strings.HasPrefix(err.Error(), "unknown tool") {
 			t.Errorf("%s is listed but Call does not know it", tool.Name)
 		}
 	}
-	if len(seen) != 5 {
-		t.Errorf("got %d tools, want 5", len(seen))
+	if len(seen) != 6 || !seen["search"] {
+		t.Errorf("with a model: %v, want the 5 tools and search", seen)
 	}
 }

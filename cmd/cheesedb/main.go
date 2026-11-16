@@ -60,7 +60,8 @@
 //	    Re-checks the whole log on disk; returns the head fingerprint.
 //	    Keep a copy elsewhere to detect a rebuilt or shortened log later.
 //	(*Agent).Report() Report
-//	    What opening found: Records, DroppedBytes, ResumedRollover, FinishedErase.
+//	    What opening found: Records, DroppedBytes, ResumedRollover, FinishedErase,
+//	    UnfinishedErase and EraseErr (an erase a broken vector index holds up).
 //	(*Agent).Close() error
 //
 // Errors to check with errors.Is: ErrBadName, ErrAgentExists, ErrBadToken,
@@ -73,6 +74,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -110,8 +112,17 @@ Looking
   cheesedb get <agent> <id>                   one record
   cheesedb find <agent> "<text>"              search the raw files on disk for text
 
+Search by meaning (needs an embedding model in <home>/llm.conf; see embed.go)
+  cheesedb search <agent> "<question>" [k]    the k memories closest in meaning (default 10)
+  cheesedb embed <agent>                      make every live memory searchable (again);
+                                              after that, remember does it for each new one
+  cheesedb index <agent> [drop <name>]        list the agent's indexes, or drop one
+
 Removing
   cheesedb recall <agent> <id> fair|strict untrusted|erase
+  cheesedb forget <agent> "<what>"            find the memory closest in meaning, show what
+                                              would go with it, erase after a yes
+                                              (needs the embedding model)
   cheesedb compact <agent>                    erase the text of every dead record
 
 Checking
@@ -120,7 +131,9 @@ Checking
 
 With an LLM (any OpenAI-compatible server, set in <home>/llm.conf; see llm.go)
   cheesedb learn <agent>                      the LLM turns live sources into memories
-  cheesedb ask <agent> "<question>"           the LLM answers from live memories only
+  cheesedb ask <agent> "<question>" [k]       search finds the k closest live memories
+                                              (default 10), the LLM answers from them only;
+                                              needs the embedding model too
   cheesedb demo                               the full story, compared with a naive store
 
 For AI apps (MCP)
@@ -184,6 +197,20 @@ func run(args []string) error {
 			return errors.New("use: cheesedb mcp <agent>  (started by an MCP app, not by hand)")
 		}
 		return mcpCommand(args[0])
+	case "remember":
+		return rememberCommand(args)
+	case "search":
+		return searchCommand(args)
+	case "ask":
+		return askCommand(args)
+	case "learn":
+		return learnCommand(args)
+	case "forget":
+		return forgetCommand(args)
+	case "embed":
+		return embedCommand(args)
+	case "index":
+		return indexCommand(args)
 	case "agent":
 		if len(args) < 2 || (args[0] != "create" && args[0] != "delete") {
 			return errors.New("use: cheesedb agent create <agent>  or  cheesedb agent delete <agent>")
@@ -203,7 +230,7 @@ func run(args []string) error {
 	}
 	defer s.Close()
 	defer a.Close()
-	if rep := a.Report(); rep.DroppedBytes > 0 || rep.ResumedRollover || rep.FinishedErase > 0 {
+	if rep := a.Report(); rep.DroppedBytes > 0 || rep.ResumedRollover || rep.FinishedErase > 0 || rep.UnfinishedErase > 0 {
 		fmt.Printf("note: opening found %+v\n", rep)
 	}
 	name, args := args[0], args[1:]
@@ -216,19 +243,6 @@ func run(args []string) error {
 		id, err := a.AddLot(args[0], []byte(args[1]))
 		if err == nil {
 			fmt.Println("lot", id)
-		}
-		return err
-	case "remember":
-		if len(args) < 2 {
-			return errors.New(`remember needs <agent> "<text>" and at least one <leg>`)
-		}
-		legs, err := parseLegs(args[1:])
-		if err != nil {
-			return err
-		}
-		id, err := a.Remember([]byte(args[0]), legs...)
-		if err == nil {
-			fmt.Println("memory", id)
 		}
 		return err
 	case "show":
@@ -268,33 +282,6 @@ func run(args []string) error {
 		head, err := a.Verify()
 		if err == nil {
 			fmt.Printf("OK. head fingerprint: %x\n", head)
-		}
-		return err
-	case "learn":
-		c, err := newLLM()
-		if err != nil {
-			return err
-		}
-		facts, err := learn(c, a)
-		if err == nil {
-			printFacts(facts)
-		}
-		return err
-	case "ask":
-		if len(args) < 1 {
-			return errors.New(`ask needs <agent> "<question>"`)
-		}
-		c, err := newLLM()
-		if err != nil {
-			return err
-		}
-		texts, err := liveMemoryTexts(a)
-		if err != nil {
-			return err
-		}
-		answer, err := ask(c, texts, args[0])
-		if err == nil {
-			fmt.Println(answer)
 		}
 		return err
 	}
@@ -487,20 +474,21 @@ type hit struct {
 
 // findHits searches every file of an agent, byte by byte and ignoring case,
 // for text: the honest test of whether something is still on disk. It reads
-// the files directly, not through cheesedb.
+// the files directly, not through cheesedb, including those in the agent's
+// vector index folders.
 func findHits(dir, name, text string) ([]hit, error) {
 	folder := filepath.Join(dir, hex.EncodeToString([]byte(name)))
-	entries, err := os.ReadDir(folder)
-	if err != nil {
-		return nil, err
-	}
 	needle := asciiLower([]byte(text))
 	var hits []hit
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(folder, e.Name()))
-		if err != nil {
-			return hits, err
+	err := filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(folder, path)
 		lower := asciiLower(b)
 		for i := 0; ; {
 			j := bytes.Index(lower[i:], needle)
@@ -509,11 +497,12 @@ func findHits(dir, name, text string) ([]hit, error) {
 			}
 			at := i + j
 			from, to := max(0, at-25), min(len(b), at+len(needle)+25)
-			hits = append(hits, hit{e.Name(), at, printable(b[from:to])})
+			hits = append(hits, hit{rel, at, printable(b[from:to])})
 			i = at + len(needle)
 		}
-	}
-	return hits, nil
+		return nil
+	})
+	return hits, err
 }
 
 // asciiLower lower-cases A-Z only and keeps every other byte, so positions

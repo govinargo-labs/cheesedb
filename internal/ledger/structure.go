@@ -15,6 +15,9 @@ import (
 //	LOT     source type text (1-255 bytes, UTF-8)
 //	MEMORY  legCount, then per leg: parentCount, parent ids (sorted)
 //	RECALL  target id, mode (1 byte), reason (1 byte)
+//	VECTOR  target id: the lot or memory in the main log it describes,
+//	        then 8 bytes: the start of that record's chain hash
+//	        (written only to an index log, see vector.go)
 //
 // Decoding is strict: anything the encoder would never produce is refused,
 // so every structure has exactly one valid encoding.
@@ -148,6 +151,36 @@ func decodeRecall(b []byte, self ID) (ID, Mode, Reason, error) {
 	return target, m, r, nil
 }
 
+// tagSize is how much of the target's chain hash a VECTOR record keeps.
+// The id alone names a record only within one history: if the main log is
+// restored from an older copy, the next lot gets the same id as a lost one,
+// and an id-only vector would quietly describe it. The chain hash is
+// different for every record of every history, so a vector whose tag does
+// not match was written against other files. Eight bytes are plenty to
+// catch a mix-up; this is a consistency check, not a defence against
+// someone who can rewrite the files (see THREAT_MODEL.md).
+const tagSize = 8
+
+func encodeVector(target ID, tag [tagSize]byte) []byte {
+	return append(binary.AppendUvarint(nil, uint64(target)), tag[:]...)
+}
+
+// decodeVector reads a VECTOR record's target and tag. Both are checked
+// against the main log when the index is loaded.
+func decodeVector(b []byte) (ID, [tagSize]byte, error) {
+	d := decoder{b: b}
+	target := ID(d.uvarint())
+	var tag [tagSize]byte
+	copy(tag[:], d.fixed(tagSize))
+	if err := d.finish(); err != nil {
+		return 0, tag, err
+	}
+	if target == 0 {
+		return 0, tag, fmt.Errorf("%w: vector for id 0", errMalformed)
+	}
+	return target, tag, nil
+}
+
 // decoder reads uvarints and bytes from b and remembers the first error, so
 // the decode functions above read like a list of fields instead of an error
 // check after every one.
@@ -194,6 +227,19 @@ func (d *decoder) byte() byte {
 	c := d.b[0]
 	d.b = d.b[1:]
 	return c
+}
+
+// fixed reads exactly n bytes.
+func (d *decoder) fixed(n int) []byte {
+	if d.err == nil && len(d.b) < n {
+		d.err = fmt.Errorf("%w: ended early", errMalformed)
+	}
+	if d.err != nil {
+		return nil
+	}
+	b := d.b[:n]
+	d.b = d.b[n:]
+	return b
 }
 
 // finish reports the first error, or trailing bytes nobody asked for.

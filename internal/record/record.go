@@ -72,9 +72,14 @@ const (
 	TypeLot    Type = 1
 	TypeMemory Type = 2
 	TypeRecall Type = 3
+
+	// TypeVector holds one embedding of a lot or memory. It is written only
+	// to a vector index's own log, never to an agent's main log; the ledger
+	// refuses it there (see ARCHITECTURE.md section 9).
+	TypeVector Type = 4
 )
 
-func (t Type) valid() bool { return t >= TypeLot && t <= TypeRecall }
+func (t Type) valid() bool { return t >= TypeLot && t <= TypeVector }
 
 var (
 	// ErrTruncated means the bytes end before the record does. At the end of

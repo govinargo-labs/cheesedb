@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func mustStore(t *testing.T, dir string) *Store {
@@ -379,4 +380,41 @@ func folderEntries(t *testing.T, dir string) []os.DirEntry {
 		}
 	}
 	return out
+}
+
+// TestAgentClosing: closing an agent's last handle waits for its write in
+// progress, which can take a while, so it runs without the store's lock.
+// Meanwhile other agents open as usual, the same agent waits (a second
+// ledger on its files would be a second writer), and it cannot be deleted.
+// The test plays a slow close by listing a ledger as closing by hand.
+func TestAgentClosing(t *testing.T) {
+	s := mustStore(t, filepath.Join(t.TempDir(), "store"))
+	alice := must(s.CreateAgent("alice"))
+	bob := must(s.CreateAgent("bob"))
+	slow := &shared{done: make(chan struct{})}
+	s.mu.Lock()
+	s.closing[keyOf(alice)] = slow
+	s.mu.Unlock()
+
+	b := must(s.OpenAgent(bob)) // must not wait for Alice
+	b.Close()
+	if err := s.DeleteAgent(alice); !errors.Is(err, ErrAgentInUse) {
+		t.Fatalf("DeleteAgent while closing: %v", err)
+	}
+	opened := make(chan *Agent)
+	go func() { opened <- must(s.OpenAgent(alice)) }()
+	select {
+	case <-opened:
+		t.Fatal("OpenAgent did not wait for the closing ledger")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(slow.done)
+	a := <-opened
+	must(a.AddLot("note", []byte("after the close")))
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAgent(alice); err != nil {
+		t.Fatalf("DeleteAgent after the close: %v", err)
+	}
 }

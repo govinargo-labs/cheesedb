@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Govindaraj Rangaraj">
+<title>CheeseDB numbers</title>
+<meta name="description" content="CheeseDB measured: one agent with 1 million memories and real embeddings, and the same data on SQLite, PostgreSQL and Neo4j.">
+<meta property="og:title" content="CheeseDB numbers">
+<meta property="og:url" content="https://cheesedb.dev/numbers.html">
+<link rel="canonical" href="https://cheesedb.dev/numbers.html">
+<meta name="theme-color" content="#F3F6F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1512" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+  <nav aria-label="Main">
+    <a class="brand" href="index.html"><img src="assets/mark.svg" alt="">CheeseDB</a>
+    <div class="navlinks">
+      <a class="hide-s" href="index.html#demo">Demo</a>
+      <a class="hide-s" href="index.html#plain">Plain English</a>
+      <a class="hide-s" href="mcp.html">MCP</a>
+      <a class="hide-s" href="numbers.html" aria-current="page">Numbers</a>
+      <a class="hide-s" href="limits.html">Limits</a>
+      <a class="btn small primary" href="https://github.com/govinargo-labs/cheesedb">GitHub</a>
+    </div>
+  </nav>
+
+  <section class="pagehead" id="scale">
+    <h2>How it scales.</h2>
+    <p class="lead">One agent with a search index (768 values per memory), from a thousand memories to a million. These are CheeseDB’s own times: the embedding model is not included. With a local one, turning a question into a vector took 17 ms.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Memories in one agent</th><th class="num">1,000</th><th class="num">10,000</th><th class="num">100,000</th><th class="num">1,000,000</th></tr></thead>
+        <tbody>
+          <tr><td>Disk: memories / search index</td><td class="num">0.3 MB / 3.1 MB</td><td class="num">3 MB / 31 MB</td><td class="num">30 MB / 311 MB</td><td class="num">300 MB / 3.1 GB</td></tr>
+          <tr><td>RAM with the index loaded</td><td class="num">1.4 MB</td><td class="num">11 MB</td><td class="num">99 MB</td><td class="num">1.1 GB</td></tr>
+          <tr><td>Search, store kept open (Go)</td><td class="num win">1.1 ms</td><td class="num win">2.2 ms</td><td class="num win">18 ms</td><td class="num win">142 ms</td></tr>
+          <tr><td>Search per <code>cheesedb</code> command or MCP call</td><td class="num">9.7 ms</td><td class="num">82 ms</td><td class="num">0.76 s</td><td class="num">7.5 s</td></tr>
+          <tr><td>Recall with Erase per command or MCP call</td><td class="num">30 ms</td><td class="num">120 ms</td><td class="num">0.85 s</td><td class="num">7.6 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tnote">Median of 3 runs on an Apple M1 Max. In memory each vector takes one byte per value; the few rows that could make the top results are re-checked with the exact values on disk, so results are exact. The command and the MCP server open the store for every call, so each search reloads the index; they suit agents of up to about 100,000 memories. A Go program that keeps the store open loads it once. With real embeddings and varied text at 1M, search still ranked the right memories first among a million look-alikes, and none came back after their source was recalled. Models, measured apart: embedding one question 17 ms; embedding a million memories about 36 minutes (CheeseDB’s part: 42 s). Method and every number: <a href="https://github.com/govinargo-labs/cheesedb/blob/main/BENCHMARKS.md#search-index-cheesedbs-own-cost-by-size">BENCHMARKS.md</a>.</p>
+  </section>
+
+  <section id="speed">
+    <h2>Faster at recall and reads. Much slower to start.</h2>
+    <p class="lead" style="margin-top:14px">The same data on all four engines (including Neo4j, a graph database), with every write flushed to the physical disk before it is acknowledged.</p>
+
+    <div class="bars">
+      <div role="img" aria-label="Recall that removes 10,000 memories: CheeseDB 5.5 milliseconds, SQLite 235 milliseconds, PostgreSQL 1.82 seconds, Neo4j 67 milliseconds">
+        <h3>Recall that removes 10,000 memories</h3>
+        <div class="bar-row"><span class="bar-name">CheeseDB</span><span class="track"><span class="fill win" style="--w:23%"></span></span><span class="bar-val">5.5 ms</span></div>
+        <div class="bar-row"><span class="bar-name">SQLite</span><span class="track"><span class="fill" style="--w:73%"></span></span><span class="bar-val">235 ms</span></div>
+        <div class="bar-row"><span class="bar-name">PostgreSQL</span><span class="track"><span class="fill" style="--w:100%"></span></span><span class="bar-val">1.82 s</span></div>
+        <div class="bar-row"><span class="bar-name">Neo4j</span><span class="track"><span class="fill" style="--w:56%"></span></span><span class="bar-val">67 ms</span></div>
+        <p class="note">Log scale.</p>
+      </div>
+      <div role="img" aria-label="Read one memory by id: CheeseDB 1.6 microseconds, SQLite 7.0 microseconds, PostgreSQL 44 microseconds, Neo4j 179 microseconds">
+        <h3>Read one memory by id</h3>
+        <div class="bar-row"><span class="bar-name">CheeseDB</span><span class="track"><span class="fill win" style="--w:9%"></span></span><span class="bar-val">1.6 µs</span></div>
+        <div class="bar-row"><span class="bar-name">SQLite</span><span class="track"><span class="fill" style="--w:38%"></span></span><span class="bar-val">7.0 µs</span></div>
+        <div class="bar-row"><span class="bar-name">PostgreSQL</span><span class="track"><span class="fill" style="--w:73%"></span></span><span class="bar-val">44 µs</span></div>
+        <div class="bar-row"><span class="bar-name">Neo4j</span><span class="track"><span class="fill" style="--w:100%"></span></span><span class="bar-val">179 µs</span></div>
+        <p class="note">Log scale.</p>
+      </div>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>1M memories per agent</th><th class="num">CheeseDB</th><th class="num">SQLite</th><th class="num">PostgreSQL</th><th class="num">Neo4j</th></tr></thead>
+        <tbody>
+          <tr><td>Recall that removes 10,000 memories</td><td class="num win">5.5 ms</td><td class="num">235 ms</td><td class="num">1.82 s</td><td class="num">67 ms</td></tr>
+          <tr><td>Recall that removes 20 memories</td><td class="num win">4.8 ms</td><td class="num">7.1 ms</td><td class="num">10.5 ms</td><td class="num">6.8 ms</td></tr>
+          <tr><td>Read one memory by id</td><td class="num win">1.6 µs</td><td class="num">7.0 µs</td><td class="num">44 µs</td><td class="num">179 µs</td></tr>
+          <tr><td>Durable write (one memory)</td><td class="num win">4.7 ms</td><td class="num">5.3 ms</td><td class="num">6.6 ms</td><td class="num">6.3 ms</td></tr>
+          <tr><td>Startup, ready for the first query</td><td class="num">667 ms</td><td class="num win">0.1 ms</td><td class="num">2.7 ms</td><td class="num">1.0 ms¹</td></tr>
+          <tr><td>Disk per memory</td><td class="num">314 B</td><td class="num win">249 B</td><td class="num">546 B</td><td class="num">496 B</td></tr>
+          <tr><td>RAM per memory while open</td><td class="num">205 B</td><td class="num">page cache only</td><td class="num">shared buffers only</td><td class="num">JVM heap and page cache</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tnote">Median of 3 runs on an Apple M1 Max (macOS, internal SSD), SQLite 3.53, PostgreSQL 17 and Neo4j Community 2026.10. PostgreSQL and Neo4j ran over TCP on localhost. Writes are close because the disk flush dominates for every engine. SQLite is smaller on disk and starts far faster. ¹ A new connection to a server that is already running; booting the Neo4j server took 6.5 to 8.2 s. The Neo4j model and queries are ours, and an expert may do better. These numbers are for the library without a search index. Method and caveats are in <a href="https://github.com/govinargo-labs/cheesedb/blob/main/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+  </section>
+
+  <footer>
+    <div class="foot">
+      <div>
+        <a class="brand" href="index.html"><img src="assets/mark.svg" alt="">CheeseDB</a>
+        <p style="margin-top:6px"><small>A database engine purpose-built for AI memory.</small></p>
+      </div>
+      <nav aria-label="Project links">
+        <a href="index.html">Home</a>
+        <a href="mcp.html">MCP</a>
+        <a href="limits.html">Limits</a>
+        <a href="https://github.com/govinargo-labs/cheesedb/blob/main/BENCHMARKS.md">Benchmarks</a>
+      </nav>
+    </div>
+    <p style="margin-top:20px"><small>Apache License 2.0. Created by <a href="https://www.linkedin.com/in/govinr/" rel="author">Govindaraj Rangaraj</a> at govinargo-labs, with <a href="https://github.com/govinargo-labs/cheesedb/graphs/contributors">contributions from the community</a> · <a href="https://www.linkedin.com/in/govinr/">consulting</a></small></p>
+  </footer>
+</div>
+</body>
+</html>

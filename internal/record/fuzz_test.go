@@ -91,7 +91,7 @@ func decodeSeeds(f *testing.F) [][]byte {
 		}
 		return buf
 	}
-	for _, typ := range []Type{TypeLot, TypeMemory, TypeRecall} {
+	for _, typ := range []Type{TypeLot, TypeMemory, TypeRecall, TypeVector} {
 		for _, structure := range []string{"", "legs: [1] or [2]"} {
 			r, err := New(typ, 42, [32]byte{0xAB}, []byte(structure), []byte("user lives in Pune"))
 			if err != nil {

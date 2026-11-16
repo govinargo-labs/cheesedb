@@ -43,11 +43,17 @@ func (m *sim) mem(legs ...Leg) ID {
 	return id
 }
 
+// recall also checks, before every recall, that the preview (wouldRemove)
+// names exactly what the recall then removes.
 func (m *sim) recall(target ID, mode Mode) []ID {
 	m.t.Helper()
+	preview := m.s.wouldRemove(target, mode)
 	removed, err := m.s.recall(m.next(), target, mode)
 	if err != nil {
 		m.t.Fatal(err)
+	}
+	if !slices.Equal(preview, removed) {
+		m.t.Fatalf("recall %d (mode %d): preview %v, removed %v", target, mode, preview, removed)
 	}
 	return removed
 }

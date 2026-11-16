@@ -137,3 +137,44 @@ func ExampleAgent_Compact() {
 	// head unchanged: true
 	// active: [4] expected: [4]
 }
+
+// Search by meaning. The caller embeds each lot or memory with its own
+// model (here, hand-made 3-value vectors: weather, food, travel) and
+// cheesedb finds the closest. Recalling a source removes the vectors of
+// everything that depended on it, so a search can never return them.
+func ExampleAgent_Search() {
+	tmp, _ := os.MkdirTemp("", "cheesedb-example-")
+	defer os.RemoveAll(tmp)
+
+	s, _ := cheesedb.Open(filepath.Join(tmp, "cheesedb"))
+	defer s.Close()
+	tok, _ := s.CreateAgent("alice")
+	alice, _ := s.OpenAgent(tok)
+	defer alice.Close()
+
+	_ = alice.CreateIndex("default", 3, "toy-model")
+
+	forecast, _ := alice.AddLot("weather_tool", []byte("Pune: rain all week"))
+	menu, _ := alice.AddLot("web_page", []byte("menu: misal pav"))
+	rain, _ := alice.Remember([]byte("it will rain in Pune"), cheesedb.Leg{forecast})
+	food, _ := alice.Remember([]byte("the user likes misal pav"), cheesedb.Leg{menu})
+
+	_ = alice.EmbedBatch("default", []cheesedb.Embedding{
+		{ID: rain, Vector: []float32{0.9, 0.1, 0.2}},
+		{ID: food, Vector: []float32{0.1, 0.9, 0.1}},
+	})
+
+	question := []float32{1, 0, 0.1} // "do I need an umbrella?"
+	hits, _ := alice.Search("default", question, 1)
+	best, _ := alice.Get(hits[0].ID)
+	fmt.Printf("best match: %s (score %.2f)\n", best.Data, hits[0].Score)
+
+	// The forecast was wrong: erase it, and everything learned from it.
+	_, _ = alice.Recall(forecast, cheesedb.Fair, cheesedb.Erase)
+	hits, _ = alice.Search("default", question, 1)
+	best, _ = alice.Get(hits[0].ID)
+	fmt.Printf("after recall: %s\n", best.Data)
+	// Output:
+	// best match: it will rain in Pune (score 0.99)
+	// after recall: the user likes misal pav
+}

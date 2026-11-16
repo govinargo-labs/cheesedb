@@ -1,7 +1,8 @@
 package main
 
 // `cheesedb mcp <agent>` serves one agent's memory to an MCP app (Claude
-// Code, Cursor, ...) as the five tools of internal/tools.
+// Code, Cursor, ...) as the tools of internal/tools: five, and search when
+// an embedding model is set up (embed.go).
 //
 // The app starts this program and talks to it over stdin and stdout: one
 // JSON-RPC 2.0 message per line. Only protocol messages may go to stdout;
@@ -23,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/govinargo-labs/cheesedb"
@@ -39,27 +41,53 @@ func mcpCommand(name string) error {
 	open := func() (*cheesedb.Store, *cheesedb.Agent, error) {
 		s, a, err := openAgent(dataDir, name)
 		if err == nil {
-			if rep := a.Report(); rep.DroppedBytes > 0 || rep.ResumedRollover || rep.FinishedErase > 0 {
+			if rep := a.Report(); rep.DroppedBytes > 0 || rep.ResumedRollover || rep.FinishedErase > 0 || rep.UnfinishedErase > 0 {
 				fmt.Fprintf(os.Stderr, "cheesedb: opening found %+v\n", rep)
 			}
 		}
 		return s, a, err
 	}
-	// Open once now, so a wrong agent name fails at start (the app shows
-	// stderr) instead of on the model's first tool call.
+	// Open once now, so a wrong agent name or bad settings fail at start
+	// (the app shows stderr) instead of on the model's first tool call.
 	s, a, err := openRetry(open)
 	if err != nil {
 		return err
 	}
 	a.Close()
 	s.Close()
-	return serveMCP(os.Stdin, os.Stdout, open)
+	emb, err := newEmbedder()
+	if err != nil {
+		return err
+	}
+	return serveMCP(os.Stdin, os.Stdout, host(open, emb))
+}
+
+// host gives the tools the agent and the embedding model, if there is one.
+// The store is opened for each tool call and closed at once: it allows one
+// open at a time per folder, so holding it for the whole session would lock
+// out a second app window and the cheesedb command; a small agent opens in
+// milliseconds. The tools call the model before opening it.
+func host(open opener, emb *embedder) tools.Host {
+	h := tools.Host{Open: func() (*cheesedb.Agent, func(), error) {
+		s, a, err := openRetry(open)
+		if err != nil {
+			return nil, nil, err
+		}
+		return a, func() { a.Close(); s.Close() }, nil
+	}}
+	if emb != nil { // a nil *embedder in the interface would not be a nil Embedder
+		h.Embed = emb
+	}
+	return h
 }
 
 type rpcRequest struct {
 	ID     json.RawMessage `json:"id"` // a number or a string; absent for a notification
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
+	// Set only in a reply to a request of ours, which must not be answered.
+	Result json.RawMessage `json:"result"`
+	Error  json.RawMessage `json:"error"`
 }
 
 type rpcResponse struct {
@@ -80,27 +108,46 @@ type rpcError struct {
 // a broken app would grow in memory until the process dies.
 const maxLine = 8 << 20
 
+// mcpSession is one connection to an app.
+type mcpSession struct {
+	r      *bufio.Reader
+	enc    *json.Encoder   // Encode ends each message with '\n'
+	h      tools.Host      // h.Confirm is set once the app says it can ask the person
+	queue  [][]byte        // messages that came in while we waited for the person
+	callID json.RawMessage // the tools/call being run, so the app's cancel of it can be seen
+	asked  int             // numbers our own requests to the app
+	// cancelled is set when the app cancels the running tools/call: it
+	// then gets no answer.
+	cancelled bool
+}
+
 // serveMCP answers one message per line from in, until in is closed (the
 // app ends the session). Messages are handled one at a time: cheesedb
 // allows one write at a time per agent anyway.
-func serveMCP(in io.Reader, out io.Writer, open opener) error {
+func serveMCP(in io.Reader, out io.Writer, h tools.Host) error {
 	// Lines, not a json.Decoder over the whole stream: after one broken
 	// line a Decoder cannot find the next message, but a line reader just
 	// moves on. (bufio.Scanner would also do, but stops at 64 KiB, which a
 	// long memory could pass.)
-	r := bufio.NewReader(in)
-	enc := json.NewEncoder(out) // Encode ends each message with '\n'
+	s := &mcpSession{r: bufio.NewReader(in), enc: json.NewEncoder(out), h: h}
 	for {
-		line, tooLong, err := readLine(r)
+		var line []byte
+		var tooLong bool
+		var err error
+		if len(s.queue) > 0 {
+			line, s.queue = s.queue[0], s.queue[1:]
+		} else {
+			line, tooLong, err = readLine(s.r)
+		}
 		var resp *rpcResponse
 		switch {
 		case tooLong:
 			resp = &rpcResponse{JSONRPC: "2.0", Error: &rpcError{-32700, "message too long"}}
 		case len(line) > 0:
-			resp = handle(line, open)
+			resp = s.handle(line)
 		}
 		if resp != nil {
-			if err := enc.Encode(resp); err != nil {
+			if err := s.enc.Encode(resp); err != nil {
 				return err
 			}
 		}
@@ -111,6 +158,112 @@ func serveMCP(in io.Reader, out io.Writer, open opener) error {
 			return err
 		}
 	}
+}
+
+// maxWaiting caps the messages kept while the person decides: without it,
+// a broken app could send without end and grow memory until we die.
+const maxWaiting = 64
+
+// ask puts a yes or no question to the person through the app (MCP
+// "elicitation"): the app shows a form to the person, and the model cannot
+// fill it in. It runs inside a tool call, so it reads the app's messages
+// itself until the answer comes. A ping is answered at once (an app may
+// drop a session whose pings go unanswered); other requests wait in the
+// queue, and the app cancelling the tool call we are in ends the wait.
+// There is no timeout: the store is closed meanwhile, so waiting blocks
+// nobody else.
+func (s *mcpSession) ask(question string) (bool, error) {
+	s.asked++
+	id := json.RawMessage(strconv.Quote(fmt.Sprintf("cheesedb-ask-%d", s.asked)))
+	err := s.enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": id, "method": "elicitation/create",
+		"params": map[string]any{
+			"message": question,
+			"requestedSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{"confirm": map[string]any{
+					"type": "boolean", "title": "Yes, recall it for good", "default": false,
+				}},
+				"required": []string{"confirm"},
+			},
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	for {
+		line, tooLong, err := readLine(s.r)
+		if tooLong {
+			if err := s.enc.Encode(&rpcResponse{JSONRPC: "2.0", Error: &rpcError{-32700, "message too long"}}); err != nil {
+				return false, err
+			}
+		} else if len(bytes.TrimSpace(line)) > 0 {
+			// Only the envelope first: a reply whose result has an
+			// unexpected shape must still be seen as the reply it is.
+			var m struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+				Result json.RawMessage `json:"result"`
+				Error  json.RawMessage `json:"error"`
+			}
+			if json.Unmarshal(line, &m) == nil && m.Method == "" {
+				if !bytes.Equal(m.ID, id) {
+					continue // an answer to a question we no longer wait for
+				}
+				if len(m.Error) > 0 && string(m.Error) != "null" {
+					return false, errors.New("the app could not ask the person")
+				}
+				var r struct {
+					Action  string `json:"action"` // accept, decline or cancel
+					Content struct {
+						Confirm bool `json:"confirm"`
+					} `json:"content"`
+				}
+				// Only a ticked box counts. An unticked or unreadable answer is a no.
+				return json.Unmarshal(m.Result, &r) == nil && r.Action == "accept" && r.Content.Confirm, nil
+			}
+			if err := s.whileAsking(line, m.ID, m.Method, m.Params, id); err != nil {
+				return false, err
+			}
+		}
+		if err != nil {
+			return false, err // includes the app closing the connection
+		}
+	}
+}
+
+// errCancelled ends ask when the app cancels the tool call that asked.
+var errCancelled = errors.New("the app cancelled the call")
+
+// whileAsking handles a request, a notification or a broken line that
+// arrives while ask waits for the person (method is "" for a broken line).
+func (s *mcpSession) whileAsking(line []byte, msgID json.RawMessage, method string, params json.RawMessage, askID json.RawMessage) error {
+	switch {
+	case method == "ping" && msgID != nil:
+		return s.enc.Encode(&rpcResponse{JSONRPC: "2.0", ID: msgID, Result: struct{}{}})
+	case method == "notifications/cancelled":
+		var p struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		json.Unmarshal(params, &p)
+		if s.callID == nil || !bytes.Equal(p.RequestID, s.callID) {
+			return nil // about another request, already answered
+		}
+		// Let the app close the form, and answer the call no more: the
+		// spec says a cancelled request gets no response.
+		s.cancelled = true
+		if err := s.enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled",
+			"params": map[string]any{"requestId": askID, "reason": "the tool call was cancelled"}}); err != nil {
+			return err
+		}
+		return errCancelled
+	case len(s.queue) < maxWaiting:
+		s.queue = append(s.queue, line) // answered after this call
+	case msgID != nil && method != "":
+		return s.enc.Encode(&rpcResponse{JSONRPC: "2.0", ID: msgID, Error: &rpcError{-32603, "busy: waiting for the person to answer a question"}})
+	}
+	return nil // a notification or broken line past the cap: dropped
 }
 
 // readLine reads up to the next '\n'. A line longer than maxLine is read to
@@ -132,7 +285,7 @@ func readLine(r *bufio.Reader) (line []byte, tooLong bool, err error) {
 }
 
 // handle answers one message, or returns nil when no answer is due.
-func handle(line []byte, open opener) *rpcResponse {
+func (s *mcpSession) handle(line []byte) *rpcResponse {
 	var req rpcRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -143,16 +296,25 @@ func handle(line []byte, open opener) *rpcResponse {
 	if req.ID == nil {
 		return nil // a notification (such as notifications/initialized): never answered
 	}
+	if req.Method == "" && (req.Result != nil || req.Error != nil) {
+		return nil // a reply, such as a late answer to a question ask stopped waiting for
+	}
 	resp := &rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
-		resp.Result = initialize(req.Params)
+		resp.Result = s.initialize(req.Params)
 	case "ping":
 		resp.Result = struct{}{}
 	case "tools/list":
-		resp.Result = listTools()
+		resp.Result = listTools(s.h)
 	case "tools/call":
-		result, err := callTool(req.Params, open)
+		s.callID = req.ID
+		result, err := callTool(req.Params, s.h)
+		s.callID = nil
+		if s.cancelled {
+			s.cancelled = false
+			return nil
+		}
 		if err != nil {
 			resp.Error = &rpcError{-32602, err.Error()}
 		} else {
@@ -165,36 +327,48 @@ func handle(line []byte, open opener) *rpcResponse {
 }
 
 // initialize agrees on a protocol version: the client's if we speak it,
-// otherwise our newest (the client then decides whether to go on).
-func initialize(params json.RawMessage) any {
+// otherwise our newest (the client then decides whether to go on). It also
+// notes whether the app can ask the person a question (elicitation, since
+// 2025-06-18), which recall then does before removing anything.
+func (s *mcpSession) initialize(params json.RawMessage) any {
 	var p struct {
 		ProtocolVersion string `json:"protocolVersion"`
+		Capabilities    struct {
+			Elicitation *struct {
+				Form *struct{} `json:"form"`
+				URL  *struct{} `json:"url"`
+			} `json:"elicitation"`
+		} `json:"capabilities"`
 	}
 	json.Unmarshal(params, &p) // a missing version just gets our newest
 	v := mcpVersions[0]
-	for _, s := range mcpVersions {
-		if s == p.ProtocolVersion {
-			v = s
+	for _, mv := range mcpVersions {
+		if mv == p.ProtocolVersion {
+			v = mv
 		}
+	}
+	// An empty elicitation object means forms; an app that offers only
+	// URLs (a web page of its own) cannot show our yes or no question.
+	s.h.Confirm = nil
+	if e := p.Capabilities.Elicitation; e != nil && v != "2025-03-26" && (e.Form != nil || e.URL == nil) {
+		s.h.Confirm = s.ask
 	}
 	return map[string]any{
 		"protocolVersion": v,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
 		"serverInfo":      map[string]any{"name": "cheesedb", "version": version()},
-		"instructions": "This is your long-term memory. Before you remember anything, add each new source you read as a lot. " +
-			"Always give remember the ids it was learned from; a conclusion links to the memories it is based on, never to a new lot. " +
-			"If a source turns out to be wrong, recall it.",
+		"instructions":    tools.Instructions(s.h),
 	}
 }
 
-func listTools() any {
+func listTools(h tools.Host) any {
 	type tool struct {
 		Name        string          `json:"name"`
 		Description string          `json:"description"`
 		InputSchema json.RawMessage `json:"inputSchema"`
 	}
 	var list []tool
-	for _, t := range tools.List() {
+	for _, t := range tools.List(h) {
 		list = append(list, tool{t.Name, t.Description, t.InputSchema})
 	}
 	return map[string]any{"tools": list}
@@ -203,7 +377,7 @@ func listTools() any {
 // callTool runs one tool. A tool that fails (a dead parent, a bad
 // argument) is still a result, marked isError, so the model reads why and
 // can correct its next call; only an unreadable request is a protocol error.
-func callTool(params json.RawMessage, open opener) (any, error) {
+func callTool(params json.RawMessage, h tools.Host) (any, error) {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -211,7 +385,7 @@ func callTool(params json.RawMessage, open opener) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 		return nil, errors.New("tools/call needs a tool name")
 	}
-	text, err := runTool(p.Name, p.Arguments, open)
+	text, err := tools.Call(h, p.Name, p.Arguments)
 	if err != nil {
 		text = err.Error()
 	}
@@ -219,20 +393,6 @@ func callTool(params json.RawMessage, open opener) (any, error) {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": err != nil,
 	}, nil
-}
-
-// runTool opens the store just for this call and closes it at once. The
-// store allows one open at a time per folder, so holding it for the whole
-// session would lock out a second app window and the cheesedb command; a
-// small agent opens in milliseconds.
-func runTool(name string, args json.RawMessage, open opener) (string, error) {
-	s, a, err := openRetry(open)
-	if err != nil {
-		return "", err
-	}
-	defer s.Close()
-	defer a.Close()
-	return tools.Call(a, name, args)
 }
 
 // openRetry retries for up to a second while another program has the

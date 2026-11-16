@@ -163,6 +163,62 @@ func (s *state) recall(id, target ID, m Mode) ([]ID, error) {
 	return removed, nil
 }
 
+// wouldRemove returns what recall(target, m) would remove now, in id
+// order, without changing anything: a preview, so a person can be asked
+// before an erase. It walks like recall, but keeps the deaths and dead legs
+// it imagines in maps on the side instead of in the nodes, so its work is
+// still proportional to the nodes it reaches.
+func (s *state) wouldRemove(target ID, m Mode) []ID {
+	t := s.node(target)
+	if m == Fair && t.dead {
+		return nil
+	}
+	dead := map[ID]bool{}
+	legDead := map[childRef]bool{}
+	lostLegs := map[ID]uint32{}
+	var removed []ID
+	die := func(id ID) { // like s.die, on the maps
+		dead[id] = true
+		if s.node(id).kind == record.TypeMemory {
+			removed = append(removed, id)
+		}
+		for _, ref := range s.node(id).children {
+			if s.node(ref.child).legs[ref.leg].deadParents == 0 && !legDead[ref] {
+				legDead[ref] = true
+				lostLegs[ref.child]++
+			}
+		}
+	}
+	isDead := func(id ID) bool { return s.node(id).dead || dead[id] }
+	if !t.dead {
+		die(target)
+	}
+	queue := []ID{target}
+	visited := map[ID]bool{target: true}
+	for len(queue) > 0 {
+		x := queue[0]
+		queue = queue[1:]
+		for _, ref := range s.node(x).children {
+			c := ref.child
+			switch {
+			case m == Fair:
+				if !isDead(c) && s.node(c).aliveLegs == lostLegs[c] {
+					die(c)
+					queue = append(queue, c)
+				}
+			case !visited[c]:
+				visited[c] = true
+				if !isDead(c) {
+					die(c)
+				}
+				queue = append(queue, c)
+			}
+		}
+	}
+	slices.Sort(removed)
+	return removed
+}
+
 // die marks id dead and tells each child that one of its legs lost a
 // parent. A leg dies when its first parent dies (0 -> 1), and each leg
 // lists a parent at most once, so every leg is counted dead exactly once.
@@ -308,6 +364,12 @@ func (s *state) apply(r *record.Record) error {
 			s.eraseTargets = append(s.eraseTargets, target)
 		}
 		return nil
+
+	case record.TypeVector:
+		// Vectors live in an index's own log (vector.go). One here means
+		// the files were mixed up or forged, and older versions would
+		// refuse this log anyway.
+		return fmt.Errorf("%w: record %d is a VECTOR record, which belongs in an index log", errMalformed, id)
 	}
 	return fmt.Errorf("%w: unknown record type %d", errMalformed, r.Type)
 }

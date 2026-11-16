@@ -68,6 +68,28 @@ func dataset(b *testing.B, size int) string {
 		datasets.root, datasets.dirs = root, map[int]string{}
 	}
 	dir := filepath.Join(datasets.root, sizeName(size))
+	writeDataset(b, dir, size)
+	datasets.dirs[size] = dir
+	return dir
+}
+
+// benchDir returns a new folder under the shared benchmark root, which
+// TestMain removes at the end.
+func benchDir(b *testing.B, name string) string {
+	datasets.Lock()
+	defer datasets.Unlock()
+	if datasets.root == "" {
+		root, err := os.MkdirTemp("", "cheesedb-bench-")
+		if err != nil {
+			b.Fatal(err)
+		}
+		datasets.root, datasets.dirs = root, map[int]string{}
+	}
+	return filepath.Join(datasets.root, name)
+}
+
+// writeDataset writes the benchgen workload of size memories into dir.
+func writeDataset(b *testing.B, dir string, size int) {
 	raw, _, err := logfile.Open(dir, logfile.Options{}, nil)
 	if err != nil {
 		b.Fatal(err)
@@ -97,8 +119,6 @@ func dataset(b *testing.B, size int) string {
 	if err := raw.Close(); err != nil {
 		b.Fatal(err)
 	}
-	datasets.dirs[size] = dir
-	return dir
 }
 
 func toLegs(legs [][]uint64) []Leg {

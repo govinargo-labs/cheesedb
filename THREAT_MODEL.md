@@ -9,7 +9,7 @@ Who cheesedb trusts, who it defends against, and what it explicitly does not pro
    - No memory is built on a recalled source.
    - The history is not edited silently.
 2. **Separation between agents.** One agent's handle cannot read or change another agent's data.
-3. **Erasure on request** (`Recall(..., Erase)`). The content of the recalled source and of every dead memory below it is removed from the live files before `Recall` returns. `Compact()` does the same for other dead records.
+3. **Erasure on request** (`Recall(..., Erase)`). The content of the recalled source and of every dead memory below it is removed from the live files before `Recall` returns, and so are their vectors in every index: a vector can be turned back into an approximation of its text, so it is treated as content. `Compact()` does the same for other dead records and their vectors.
 
 ## Who is trusted
 
@@ -41,10 +41,11 @@ An MCP app (Claude Code, Cursor, ...) starts `cheesedb mcp <agent>` and sends it
 | **The MCP app** (it starts the server and relays the model's calls) | Yes, like any host program: it is configured by the user and runs as the user |
 | **The model** (everything it says and every tool call it makes) | **No.** It may be prompt-injected by any page, message or tool result it has read |
 
-What a model can do through the five tools:
+What a model can do through the tools (five, and `search` when an embedding model is set up):
 - Add lots and memories, with whatever source types and legs it chooses. Legs are declared by the model, so a wrong or malicious declaration is stored as written.
-- Recall any lot or memory of its agent. Recall erases the text from disk unless the model passes `erase: false`, so one injected call can destroy the memories built on a source, permanently. This is accepted: recall is how a model removes a wrong or poisoned source, and the server cannot tell a correct recall from an injected one.
-- Read live lots and memories (`get`, `list_memories`).
+- Recall any lot or memory of its agent. Recall erases the text from disk unless the model passes `erase: false`, so an injected recall can destroy the memories built on a source, permanently. Recall takes two calls: the first only previews what would be removed and returns a confirm code (keyed to this server process and to the exact list, so it goes stale if anything changes). When the app supports MCP elicitation, the second call asks the person in a form the model cannot fill in, and nothing is removed without their yes. Without elicitation, the two calls only make the model look first: an injected model can make both. Recall itself is accepted: it is how a model removes a wrong or poisoned source, and the server cannot tell a correct recall from an injected one. In apps without elicitation, the app's own tool approval is the person's only check.
+- Read live lots and memories (`get`, `list_memories`, `search`). Search returns only memories alive at that moment.
+- Send text to the embedding server, if one is set up: every `remember` sends the memory's text and every `search` its question. The server is chosen by the user and trusted like the LLM itself; a hosted one keeps copies that an `Erase` cannot reach.
 
 What it cannot do through the tools:
 - Reach another agent: no tool takes an agent name or id.
@@ -62,6 +63,7 @@ What it cannot do through the tools:
 - **Secure deletion.** `DeleteAgent` and redaction remove files and content. Backups, snapshots and SSD blocks may keep copies.
 - **Two processes on one store, where the lock cannot work.** The file lock is advisory: it stops a second cheesedb, not a program that ignores it. It may not work on network file systems, and some systems (Solaris, AIX) have none.
 - **Denial of service.** An agent can fill the disk, or make its own log slow to replay. Quotas are not built.
+- **Search results against someone with write access.** Editing an index's files can change which ids a search returns (not what a memory says: the text always comes from the main log). The index has its own hash chain, with the same limits as the main one; keep `VerifyIndex`'s head elsewhere to detect a rebuilt chain. Each vector carries a tag from its memory's chain hash, which catches an index and a main log from different histories (a main log restored alone); it is a consistency check, not a defence against someone who rewrites both.
 - **Truth of the legs.** Callers declare legs. cheesedb cascades over what is declared, not over what an agent "really" read. Over MCP the caller is the model, so a prompt-injected model can declare them wrongly. (v2: recording reads per session as default legs.)
 - **A model with a shell over MCP.** See [the MCP section](#the-local-mcp-server-cheesedb-mcp-v1).
 - **Code execution by agents.** cheesedb stores data; it does not run agents or tools. Agents that execute code need a sandbox per agent (for example wazero, or a process per agent). That is the host's job.
@@ -80,8 +82,9 @@ What it cannot do through the tools:
 | Seal files | Damage to, or tampering with, sealed segments; a sealed segment being removed |
 | Write lock per agent; one ledger per agent in a store | Two writers on one agent's files inside one process |
 | File lock on the store folder (`LOCK`), taken first in `cheesedb.Open` | A second process (or a second `Open`) writing the same files, or deleting another process's half-created agent |
-| MCP tools: no tool takes an agent; strict argument decoding; `recall` erases by default; `get` withholds recalled text; one bounded line per message | A model reaching another agent through a parameter; a recalled injection being read back; a broken or oversized message ending the session |
+| MCP tools: no tool takes an agent; strict argument decoding; `recall` erases by default, after a preview with a confirm code and, where the app supports elicitation, the person's yes; `get` withholds recalled text; one bounded line per message | A model recalling in one careless call, or (with elicitation) without the person's consent; a model reaching another agent through a parameter; a recalled injection being read back; a broken or oversized message ending the session |
 | Redaction (`Erase`, `Compact`): segment rewritten without the content, atomic rename, finished on `Open` after a crash | Erased content remaining in the live files |
+| Vector indexes: dead items removed from memory at once; vectors erased before text, finished on `Open` or on the next load of the index (or left pending, text included, while an index is broken); Erase and Compact refused while an index cannot be loaded or a dropped one deleted | A recalled memory found again by search; erased text surviving as its vector |
 
 ## Before any real-world use
 

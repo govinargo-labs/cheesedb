@@ -23,6 +23,9 @@
 //	    agent.key          SHA-256 of the token, never the token itself
 //	    000001.seg ...     the agent's log (internal/logfile)
 //	    000001.seal ...
+//	    index-64656661756c74/   a vector index ("default"), only if created
+//	      index.meta       dims and label
+//	      000001.seg ...   its own log of vectors
 //
 // See ARCHITECTURE.md section 3 and THREAT_MODEL.md.
 package cheesedb
@@ -49,13 +52,16 @@ import (
 
 // The types callers use, named here so they never need an internal package.
 type (
-	ID     = ledger.ID
-	Leg    = ledger.Leg
-	Mode   = ledger.Mode
-	Reason = ledger.Reason
-	Item   = ledger.Item
-	Kind   = record.Type
-	Report = logfile.Report
+	ID        = ledger.ID
+	Leg       = ledger.Leg
+	Mode      = ledger.Mode
+	Reason    = ledger.Reason
+	Item      = ledger.Item
+	Kind      = record.Type
+	Report    = logfile.Report
+	Hit       = ledger.Hit
+	Embedding = ledger.Embedding
+	IndexInfo = ledger.IndexInfo
 )
 
 const (
@@ -65,6 +71,9 @@ const (
 	Erase      = ledger.Erase
 	KindLot    = record.TypeLot
 	KindMemory = record.TypeMemory
+
+	// MaxDims caps the values per vector in an index.
+	MaxDims = ledger.MaxDims
 )
 
 var (
@@ -73,6 +82,10 @@ var (
 	ErrBadLegs     = ledger.ErrBadLegs
 	ErrBadArgument = ledger.ErrBadArgument
 	ErrCorrupt     = logfile.ErrCorrupt
+	ErrNoIndex     = ledger.ErrNoIndex
+	ErrIndexExists = ledger.ErrIndexExists
+	ErrBadVector   = ledger.ErrBadVector
+	ErrRecalled    = ledger.ErrRecalled
 
 	ErrBadName     = errors.New("cheesedb: agent name must be 1-127 bytes")
 	ErrAgentExists = errors.New("cheesedb: an agent with this name already exists")
@@ -114,13 +127,14 @@ type Store struct {
 	dir  string
 	lock *os.File // the open LOCK file; closing it releases the lock
 
-	// mu guards the two maps: which agents exist, and which are open. It is
+	// mu guards the maps: which agents exist, and which are open. It is
 	// held to create, open, close or delete an agent, never during an
 	// agent's reads and writes, so agents never wait for each other's work.
-	mu     sync.Mutex
-	agents map[[32]byte]string  // token key -> agent folder name
-	open   map[[32]byte]*shared // agents open right now
-	closed bool
+	mu      sync.Mutex
+	agents  map[[32]byte]string  // token key -> agent folder name
+	open    map[[32]byte]*shared // agents open right now
+	closing map[[32]byte]*shared // agents whose ledger is closing (see Agent.Close)
+	closed  bool
 
 	// shut mirrors closed for handles, which check it on every call
 	// without taking mu (that would make agents wait for each other).
@@ -134,6 +148,7 @@ type shared struct {
 	led     *ledger.Ledger
 	report  Report
 	handles int
+	done    chan struct{} // closed once led is closed
 }
 
 const (
@@ -169,7 +184,7 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, lock: lock, agents: map[[32]byte]string{}, open: map[[32]byte]*shared{}}
+	s := &Store{dir: dir, lock: lock, agents: map[[32]byte]string{}, open: map[[32]byte]*shared{}, closing: map[[32]byte]*shared{}}
 	if err := s.load(); err != nil {
 		lock.Close()
 		return nil, err
@@ -285,6 +300,16 @@ func (s *Store) OpenAgent(tok Token) (*Agent, error) {
 	key := keyOf(tok)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// If its last handle is closing right now, wait: a second ledger on
+	// the same files would be a second writer.
+	for c := s.closing[key]; c != nil; c = s.closing[key] {
+		s.mu.Unlock()
+		<-c.done
+		s.mu.Lock()
+		if s.closing[key] == c {
+			delete(s.closing, key)
+		}
+	}
 	if s.closed {
 		return nil, ErrClosed
 	}
@@ -298,7 +323,7 @@ func (s *Store) OpenAgent(tok Token) (*Agent, error) {
 		if err != nil {
 			return nil, err
 		}
-		sh = &shared{led: led, report: rep}
+		sh = &shared{led: led, report: rep, done: make(chan struct{})}
 		s.open[key] = sh
 	}
 	sh.handles++
@@ -321,7 +346,7 @@ func (s *Store) DeleteAgent(tok Token) error {
 	if !ok {
 		return ErrBadToken
 	}
-	if s.open[key] != nil {
+	if s.open[key] != nil || s.closing[key] != nil {
 		return ErrAgentInUse
 	}
 	// Rename first, so the agent disappears in one atomic step; a crash
@@ -355,6 +380,12 @@ func (s *Store) Close() error {
 	for key, sh := range s.open {
 		errs = append(errs, sh.led.Close())
 		delete(s.open, key)
+	}
+	// Agents whose last handle is closing right now: their files must be
+	// closed before the folder is released.
+	for key, sh := range s.closing {
+		<-sh.done
+		delete(s.closing, key)
 	}
 	// Last: another process may open the folder as soon as this returns.
 	errs = append(errs, s.lock.Close())
@@ -408,6 +439,18 @@ func (a *Agent) Recall(id ID, m Mode, r Reason) ([]ID, error) {
 	return l.Recall(id, m, r)
 }
 
+// WouldRecall returns the memories Recall(id, m, ...) would remove now,
+// without changing anything, so a program can ask a person before a
+// permanent recall. A write in between can change the answer; Recall
+// returns what it actually removed.
+func (a *Agent) WouldRecall(id ID, m Mode) ([]ID, error) {
+	l, err := a.ledger()
+	if err != nil {
+		return nil, err
+	}
+	return l.WouldRecall(id, m)
+}
+
 // Active returns the ids of this agent's live memories.
 func (a *Agent) Active() ([]ID, error) {
 	l, err := a.ledger()
@@ -428,7 +471,8 @@ func (a *Agent) Get(id ID) (Item, error) {
 
 // Compact erases the content of every dead lot or memory that still has it
 // (for example those recalled as Untrusted) and returns how many. It runs
-// only when called.
+// only when called. It also erases the vectors of dead items, and vectors
+// replaced by a newer one, in every index (not counted).
 func (a *Agent) Compact() (int, error) {
 	l, err := a.ledger()
 	if err != nil {
@@ -448,6 +492,90 @@ func (a *Agent) Verify() ([32]byte, error) {
 	return l.Verify()
 }
 
+// CreateIndex creates an empty vector index for vectors of dims values.
+// label is free text kept with it, such as the embedding model's name;
+// cheesedb never reads it. Vectors from different models cannot be
+// compared, so use one index per model. See ARCHITECTURE.md section 9.
+//
+// cheesedb never calls a model: the caller computes every vector.
+func (a *Agent) CreateIndex(name string, dims int, label string) error {
+	l, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	return l.CreateIndex(name, dims, label)
+}
+
+// DropIndex deletes an index and every vector in it. It is also how to
+// recover from a damaged index: drop it, create it, embed again.
+func (a *Agent) DropIndex(name string) error {
+	l, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	return l.DropIndex(name)
+}
+
+// Indexes describes this agent's indexes, in name order. It reads each
+// one from disk the first time, to count its vectors.
+func (a *Agent) Indexes() ([]IndexInfo, error) {
+	l, err := a.ledger()
+	if err != nil {
+		return nil, err
+	}
+	return l.Indexes(), nil
+}
+
+// Embed stores vec as the vector of lot or memory id in the named index,
+// replacing any earlier one. id must be alive. The vector is scaled to
+// length 1 before it is stored; NaN, infinity, an all-zero vector or the
+// wrong number of values are refused with ErrBadVector.
+//
+// A Recall removes the vectors of everything it removes at once; with
+// Erase, they are erased from disk too.
+func (a *Agent) Embed(index string, id ID, vec []float32) error {
+	l, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	return l.Embed(index, id, vec)
+}
+
+// EmbedBatch is Embed for many vectors, sharing one disk sync per batch of
+// up to 1 MiB (about 320 vectors of 768 values). Every item is checked
+// before anything is written. If a write fails, the batches before it are
+// stored; embedding them again is harmless.
+func (a *Agent) EmbedBatch(index string, items []Embedding) error {
+	l, err := a.ledger()
+	if err != nil {
+		return err
+	}
+	return l.EmbedBatch(index, items)
+}
+
+// Search returns up to k lots or memories whose vectors are closest to
+// query (cosine similarity), best first. Every result is alive. Read the
+// text with Get. The search is exact: it compares query with every vector.
+// The first search of an index reads it from disk.
+func (a *Agent) Search(index string, query []float32, k int) ([]Hit, error) {
+	l, err := a.ledger()
+	if err != nil {
+		return nil, err
+	}
+	return l.Search(index, query, k)
+}
+
+// VerifyIndex checks one index's log on disk like Verify checks the main
+// log, and returns the index's own head fingerprint. Indexes never change
+// the head that Verify returns.
+func (a *Agent) VerifyIndex(index string) ([32]byte, error) {
+	l, err := a.ledger()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return l.VerifyIndex(index)
+}
+
 // Close releases this handle. The agent's ledger closes when its last
 // handle does.
 func (a *Agent) Close() error {
@@ -456,16 +584,30 @@ func (a *Agent) Close() error {
 	}
 	s := a.s
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.open[a.key] != a.sh {
+		s.mu.Unlock()
 		return nil // the store was closed, and the ledger with it
 	}
 	a.sh.handles--
 	if a.sh.handles > 0 {
+		s.mu.Unlock()
 		return nil
 	}
+	// Closing the ledger waits for its write in progress, which can take
+	// a while (a large Embed, a Compact), so it runs without mu: other
+	// agents must not wait for it. Meanwhile the agent is listed as
+	// closing, so OpenAgent waits and DeleteAgent refuses.
 	delete(s.open, a.key)
-	return a.sh.led.Close()
+	s.closing[a.key] = a.sh
+	s.mu.Unlock()
+	err := a.sh.led.Close()
+	close(a.sh.done) // before taking mu: Store.Close may hold it, waiting for this
+	s.mu.Lock()
+	if s.closing[a.key] == a.sh {
+		delete(s.closing, a.key)
+	}
+	s.mu.Unlock()
+	return err
 }
 
 // tmpPath returns a fresh temporary folder path inside the store. The name
