@@ -2,7 +2,7 @@
 
 cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the API and the on-disk format may change between minor versions.
 
-## Unreleased
+## v0.3.0 (preview)
 
 - **Vector search (preview).** An agent can keep vector indexes and find lots and memories by meaning: `CreateIndex`, `Embed`, `EmbedBatch`, `Search`, `Indexes`, `VerifyIndex`, `DropIndex`. You supply the embeddings; cheesedb never calls a model. Search is exact (cosine similarity). A recall removes the vectors of everything it removes, at once, and `Erase` and `Compact` remove them from disk. Each index has its own folder, log and hash chain; an agent without an index writes the same files and records as before. If an interrupted erase cannot finish because an index is damaged, the agent still opens and `Report()` says so (`UnfinishedErase`, `EraseErr`). The index format may still change. See [Ask in plain English](README.md#ask-in-plain-english) and [ARCHITECTURE.md section 9](ARCHITECTURE.md#9-vector-indexes).
 - **Search from the command line and MCP apps.** With an embedding model in `llm.conf` (`embed_model`, optionally `embed_base_url` and `embed_api_key`), `remember` also stores each memory's vector, MCP apps get a `search` tool, and the command gets `cheesedb search`, `cheesedb embed` (make existing memories searchable, or rebuild after a model change) and `cheesedb index`. `cheesedb ask` now searches first and gives the chat model only the closest live memories (10 by default), instead of every live memory, so it still works when an agent has thousands; it needs the embedding model too. `cheesedb forget <agent> "<what>"` finds the memory closest in meaning, shows it and every memory that would go with it, and erases them only after a yes (memories only: a source is still recalled by its number).
@@ -14,7 +14,7 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 - **`examples/plain-english`:** the peanut story step by step from the command line (search, ask, recall, erase, find, verify), for a demo or a screen recording.
 - **Search indexes take a quarter of the RAM:** vectors are held at one byte per value (int8), and the few rows that could make the top results are re-checked with the exact float32 values on disk, so results are unchanged. At 1M memories: 1.1 GB instead of 3.6 GB.
 - **Measured from 1,000 to 1M memories** ([BENCHMARKS.md](BENCHMARKS.md#search-index-cheesedbs-own-cost-by-size)): search takes 1.1 ms at 1,000 memories and 142 ms at 1M from Go with the store open; the command and MCP server reload the index for every call (10 ms at 1,000, 7.5 s at 1M).
-- **Website:** split into pages (home with a step-by-step recall game, MCP, numbers, limits) with shared style and script files; the architecture picture is drawn from `docs/diagram/architecture.html` and now shows search.
+- **Website:** [cheesedb.dev](https://cheesedb.dev) now has a step-by-step recall game and pages for MCP, numbers and limits. Its files no longer live in this repository. The architecture picture is drawn from `docs/diagram/architecture.html` and now shows search.
 - **A golden store written by v0.2.0** is kept in `testdata/`: every later version must open it with the same head fingerprint and answers, and write the same records.
 - **Closing an agent no longer holds the store's lock** while the agent finishes a write in progress, so other agents can be opened and closed meanwhile.
 
