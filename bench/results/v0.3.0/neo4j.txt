@@ -1,0 +1,21 @@
+$ env CHEESEDB_NEO4J=bolt://127.0.0.1:7699 $SCRATCH/bench.test -test.run ^$ -test.bench Neo4j//1M -test.benchmem -test.count=3 -test.timeout 240m
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/bench
+cpu: Apple M1 Max
+BenchmarkNeo4jStartup/neo4j/1M-10         	     655	   1702054 ns/op	   90175 B/op	     407 allocs/op
+BenchmarkNeo4jStartup/neo4j/1M-10         	     931	   1164431 ns/op	   90194 B/op	     407 allocs/op
+BenchmarkNeo4jStartup/neo4j/1M-10         	    1212	    842985 ns/op	   90190 B/op	     407 allocs/op
+BenchmarkNeo4jGet/neo4j/1M-10             	    4491	    272527 ns/op	    9566 B/op	     177 allocs/op
+BenchmarkNeo4jGet/neo4j/1M-10             	    4761	    210861 ns/op	    9568 B/op	     177 allocs/op
+BenchmarkNeo4jGet/neo4j/1M-10             	    6186	    162747 ns/op	    9565 B/op	     177 allocs/op
+BenchmarkNeo4jRemember/neo4j/1M-10        	     168	   6431144 ns/op	   36755 B/op	     477 allocs/op
+BenchmarkNeo4jRemember/neo4j/1M-10        	     193	   6072539 ns/op	   36753 B/op	     477 allocs/op
+BenchmarkNeo4jRemember/neo4j/1M-10        	     195	   6090643 ns/op	   36753 B/op	     477 allocs/op
+BenchmarkNeo4jRecall/neo4j/1M-10          	     172	   6465869 ns/op	   46052 B/op	     815 allocs/op
+BenchmarkNeo4jRecall/neo4j/1M-10          	     181	   6536538 ns/op	   46053 B/op	     815 allocs/op
+BenchmarkNeo4jRecall/neo4j/1M-10          	     176	   6722398 ns/op	   46052 B/op	     815 allocs/op
+BenchmarkNeo4jRecallLarge/neo4j/1M-10     	      16	  67681370 ns/op	  289439 B/op	   10797 allocs/op
+BenchmarkNeo4jRecallLarge/neo4j/1M-10     	      16	  67829958 ns/op	  289440 B/op	   10797 allocs/op
+BenchmarkNeo4jRecallLarge/neo4j/1M-10     	      16	  67742336 ns/op	  289459 B/op	   10797 allocs/op
+PASS

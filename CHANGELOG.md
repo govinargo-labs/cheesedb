@@ -2,6 +2,12 @@
 
 cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the API and the on-disk format may change between minor versions.
 
+## Unreleased
+
+- **The raw benchmark output is kept in the repository** ([`bench/results/v0.3.0/`](bench/results/v0.3.0/)): every benchmark command's unedited output, with the commit, machine, versions and test program checksums. BENCHMARKS.md, the README and the website now come from that run. Most numbers moved by a few percent; the largest change is PostgreSQL's read by id (44 to 59 µs). cheesedb's in-memory recall walk measured slower than in the earlier run (169 µs instead of 109 µs for 10,000 memories), which BENCHMARKS.md says.
+- **`bench/run-all.sh`** repeats the whole benchmark run with one command.
+- **Every release gets its test results:** when a release is published, the full test suite runs on Linux, macOS and Windows and each output is attached to the release.
+
 ## v0.3.0 (preview)
 
 - **Vector search (preview).** An agent can keep vector indexes and find lots and memories by meaning: `CreateIndex`, `Embed`, `EmbedBatch`, `Search`, `Indexes`, `VerifyIndex`, `DropIndex`. You supply the embeddings; cheesedb never calls a model. Search is exact (cosine similarity). A recall removes the vectors of everything it removes, at once, and `Erase` and `Compact` remove them from disk. Each index has its own folder, log and hash chain; an agent without an index writes the same files and records as before. If an interrupted erase cannot finish because an index is damaged, the agent still opens and `Report()` says so (`UnfinishedErase`, `EraseErr`). The index format may still change. See [Ask in plain English](README.md#ask-in-plain-english) and [ARCHITECTURE.md section 9](ARCHITECTURE.md#9-vector-indexes).

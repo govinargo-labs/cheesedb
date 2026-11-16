@@ -1,0 +1,9 @@
+$ env CHEESEDB_BENCH_LARGE=1 $SCRATCH/ledger.test -test.run ^$ -test.bench RecallLarge -test.benchtime=1x -test.count=3
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/internal/ledger
+cpu: Apple M1 Max
+BenchmarkRecallLarge/1M/removes-10000-10         	       1	   5049084 ns/op	  658960 B/op	      47 allocs/op
+BenchmarkRecallLarge/1M/removes-10000-10         	       1	   5863874 ns/op	  658960 B/op	      47 allocs/op
+BenchmarkRecallLarge/1M/removes-10000-10         	       1	   5228876 ns/op	  658960 B/op	      47 allocs/op
+PASS

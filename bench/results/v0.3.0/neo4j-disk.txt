@@ -1,0 +1,2 @@
+$ du -sk data/databases/neo4j
+483896	data/databases/neo4j
