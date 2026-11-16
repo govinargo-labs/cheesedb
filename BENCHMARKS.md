@@ -118,6 +118,53 @@ A full `Recall` is one durable write plus this walk. The "removes 10,000" durabl
 | | 1M | 314 B | 249 B | 546 B |
 | RAM held while open, per memory | 1M | 205 B (about 205 MB in total) | page cache only | shared buffers only |
 
+## Search index: cheesedb's own cost, by size
+
+Same machine. These numbers are cheesedb alone: **no embedding model is involved**. Each memory gets a 768-value vector (random values, which cost exactly what real ones cost: search compares every value of every vector, whatever they are). The graph is the same generated workload as above. Median of 3 runs of `BenchmarkIndex` (see "How to reproduce"); peak process memory from one run per size under `/usr/bin/time -l`, building the dataset included.
+
+In memory, each vector is kept at one byte per value; a search scans those, then reads the exact float32 vectors of the few rows that could still be in the top results from disk, so its answer is the same as an exact float32 scan ([ARCHITECTURE.md section 9](ARCHITECTURE.md#9-vector-indexes)).
+
+| Memories in one agent | 1,000 | 10,000 | 100,000 | 1,000,000 |
+|---|---|---|---|---|
+| Disk: memories / search index | 0.3 MB / 3.1 MB | 3 MB / 31 MB | 30 MB / 311 MB | 300 MB / 3.1 GB |
+| RAM with the index loaded (graph included) | 1.4 MB | 11 MB | 99 MB | 1.1 GB |
+| Peak process memory | 17 MB | 50 MB | 405 MB | 4.3 GB |
+| **Search, store kept open** | **1.1 ms** | **2.2 ms** | **18 ms** | **142 ms** |
+| Search from a fresh open (open, load the index, search) | 9.7 ms | 82 ms | 0.76 s | 7.5 s |
+| Recall with Erase, store kept open | 17 ms | 52 ms | 85 ms | 168 ms |
+| Recall with Erase from a fresh open | 30 ms | 120 ms | 0.85 s | 7.6 s |
+| Recall Untrusted from a fresh open | 5.6 ms | 12 ms | 0.34 s | 0.72 s |
+| Store every memory's vector | 64 ms | 0.43 s | 4.1 s | 42 s |
+
+"From a fresh open" is what each `cheesedb` command and each MCP tool call does, because they open the store for every call. A Go program that keeps the store open pays the load once.
+
+**One byte per value, against the float32 index it replaced** (same benchmark, medians):
+
+| | float32 in RAM | one byte in RAM |
+|---|---|---|
+| RAM with the index loaded, 1M | 3.6 GB | 1.1 GB |
+| Peak process memory, 1M | 12 GB | 4.3 GB |
+| Search, store kept open, 1k / 1M | 0.9 ms / 163 ms | 1.1 ms / 142 ms |
+| Search from a fresh open, 100k / 1M | 0.68 s / 10.6 s | 0.76 s / 7.5 s |
+
+Small indexes pay a few exact reads from disk per search (about 0.2 ms); large ones gain from scanning a quarter of the bytes. Disk is unchanged: the files keep float32.
+
+**The models, measured separately** (local oMLX on the same Mac; they are not part of cheesedb, and any other server will differ):
+
+| | |
+|---|---|
+| Embedding model, one question (nomic ModernBERT, 4-bit) | 17 ms |
+| Embedding model, 1M memories (`cheesedb embed`) | about 36 minutes (455 texts per second); cheesedb's part is the 46 s above |
+| Chat model, one `ask` answer (Qwen3.6-35B-A3B, 4-bit) | a few seconds |
+
+**With real embeddings at 1M.** The same 1M-memory size was also run end to end with the real embedding model and varied text (1,000 lots and 999,000 memories about people, cities, foods and restaurants, tens of thousands about satay or peanuts, plus the peanut story from the [README](README.md#quick-start)). "Can the user eat the satay at Spice Garden?" ranked the two right memories first (0.82 and 0.77), ahead of "Grace from Lima likes chicken satay" (0.67). After `recall ... erase` of the restaurant's web page, neither came back, and `ask` answered "I do not know". The command's search took 7 to 10 s with the float32 index of the time, of which 17 ms was the embedding model.
+
+**What this shows**
+- **Search with the store open stays fast:** 18 ms at 100,000 memories, 142 ms at 1M. The rest of the graph (read by id, recall) does not depend on the index.
+- **The cost is loading the index, not the model.** A fresh open reads the whole index log: under 0.1 s up to 10,000 memories, 0.76 s at 100,000, 7.5 s at 1M. The `cheesedb` command and the MCP server pay it on every search and every erase, so they suit agents of up to about 100,000 memories.
+- **Loading is still wasteful:** at 1M, the process peaks at 4.3 GB while the loaded index and graph take 1.1 GB.
+- Planned: keep the index loaded across MCP calls, a lighter load, and writing vectors as they are embedded.
+
 ## What this shows
 
 **Where cheesedb wins**
@@ -190,3 +237,11 @@ cheesedb's end-to-end recall of 10,000 memories (slow: about 48 s of setup per r
 ```
 CHEESEDB_BENCH_LARGE=1 go test -run '^$' -bench RecallLarge -benchtime=1x -count=3 ./internal/ledger/
 ```
+
+The search index at 1,000 to 1M memories (slow: building the 1M dataset takes about a minute and 3.4 GB of temporary disk):
+
+```
+CHEESEDB_BENCH_INDEX=1 go test -run '^$' -bench Index -benchtime=3x -count=3 -benchmem -timeout 90m ./internal/ledger/
+```
+
+Peak process memory comes from running that command under `/usr/bin/time -l` (macOS) or `/usr/bin/time -v` (Linux), one size at a time (`-bench 'Index/1M/'`).

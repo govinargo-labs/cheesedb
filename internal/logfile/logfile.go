@@ -103,6 +103,14 @@ type Report struct {
 	// FinishedErase counts records whose content was erased while opening,
 	// to finish an erase that a crash interrupted (set by the ledger).
 	FinishedErase int
+
+	// UnfinishedErase counts records whose interrupted erase opening could
+	// not finish, because a vector index could not be loaded or written;
+	// their content and vectors stay on disk until it can, and EraseErr
+	// says why. Drop or repair the index, then Compact or open again (set
+	// by the ledger).
+	UnfinishedErase int
+	EraseErr        error
 }
 
 // pos is where a record lives: segment number (1-based, as in the file

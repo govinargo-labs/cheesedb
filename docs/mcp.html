@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Govindaraj Rangaraj">
+<title>CheeseDB for AI apps (MCP)</title>
+<meta name="description" content="Give Claude Code, Cursor or any MCP app a memory that knows its sources, finds things in plain English, and can recall a bad source and everything learned from it.">
+<meta property="og:title" content="CheeseDB for AI apps (MCP)">
+<meta property="og:url" content="https://cheesedb.dev/mcp.html">
+<link rel="canonical" href="https://cheesedb.dev/mcp.html">
+<meta name="theme-color" content="#F3F6F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1512" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+  <nav aria-label="Main">
+    <a class="brand" href="index.html"><img src="assets/mark.svg" alt="">CheeseDB</a>
+    <div class="navlinks">
+      <a class="hide-s" href="index.html#demo">Demo</a>
+      <a class="hide-s" href="index.html#plain">Plain English</a>
+      <a class="hide-s" href="mcp.html" aria-current="page">MCP</a>
+      <a class="hide-s" href="numbers.html">Numbers</a>
+      <a class="hide-s" href="limits.html">Limits</a>
+      <a class="btn small primary" href="https://github.com/govinargo-labs/cheesedb">GitHub</a>
+    </div>
+  </nav>
+
+  <section class="mcp" id="mcp" aria-labelledby="mcp-h" style="margin-top:24px">
+    <h2 id="mcp-h">Give your AI app a memory it can recall.</h2>
+    <p class="lead">Claude Code, Cursor and any other MCP app can store what they learn together with the sources behind it, find it again in plain English, and remove a bad source and everything built on it. No code to write and no server to run: the app starts CheeseDB itself.</p>
+    <div class="mcpgrid">
+      <div>
+        <h3>Set it up in three commands</h3>
+        <div class="codewrap">
+          <button class="copy" type="button" data-copy-target="#mcpcode">Copy</button>
+<pre class="code" id="mcpcode" tabindex="0"><code>go install github.com/govinargo-labs/cheesedb/cmd/cheesedb@latest
+cheesedb agent create alice
+claude mcp add cheesedb -- cheesedb mcp alice</code></pre>
+        </div>
+        <p class="steps">Other apps (Cursor, Claude Desktop): add <code>{"mcpServers":{"cheesedb":{"command":"cheesedb","args":["mcp","alice"]}}}</code> to the app’s MCP settings. Then tell the model to keep its long-term memory in CheeseDB.</p>
+        <h3 style="margin-top:26px">Optional: search in plain English</h3>
+        <p class="steps" style="margin-top:8px">Add an embedding model to <code>~/.cheesedb/llm.conf</code> and restart the app. The model gets a sixth tool, <code>search</code>, and every memory it saves becomes searchable. Without it, the five other tools work exactly the same.</p>
+        <div class="codewrap" style="margin-top:12px">
+          <button class="copy" type="button" data-copy-target="#mcpembed">Copy</button>
+<pre class="code" id="mcpembed" tabindex="0"><code>embed_base_url = http://localhost:11434/v1
+embed_model    = nomic-embed-text</code></pre>
+        </div>
+      </div>
+      <div>
+        <h3>Six tools the model can call</h3>
+        <ul class="tools">
+          <li><code>add_lot</code><span>Register a new outside source: a message, a web page, a tool result.</span></li>
+          <li><code>remember</code><span>Store something learned, with the ids it came from.</span></li>
+          <li><code>search</code><span>Find memories by meaning, best first. Never returns a recalled one. (With an embedding model.)</span></li>
+          <li><code>recall</code><span>Remove a source and everything built on it, and erase the text.</span></li>
+          <li><code>get</code><span>Read one lot or memory by id.</span></li>
+          <li><code>list_memories</code><span>List what is still alive, newest first.</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="facts">
+      <div><h3>No tool takes an agent</h3><p>The agent is fixed when the server starts, so a prompt-injected model cannot reach another agent’s memory through a parameter.</p></div>
+      <div><h3>Recall really erases</h3><p>The text and search vector of a recalled source and of what depended on it are removed from disk, and recalled text is never shown back to the model.</p></div>
+      <div><h3>Local only</h3><p>It runs on your machine over standard input and output. No network port, no account, no dependencies. With a local embedding model, nothing leaves your machine.</p></div>
+    </div>
+    <p class="caveat"><b>Know the limits.</b> The model declares the sources and legs itself, so a recall is only as complete as what it wrote. A model that can also run shell commands can skip the tools and read every agent’s files. See the <a href="limits.html">limits</a> and the <a href="https://github.com/govinargo-labs/cheesedb/blob/main/THREAT_MODEL.md">threat model</a>.</p>
+  </section>
+
+  <section>
+    <h2>What a conversation looks like.</h2>
+    <p class="lead" style="margin-top:14px">You talk to your app as usual. The model decides which tools to call; here is what happens underneath.</p>
+    <div class="cols">
+      <div class="box">
+        <span class="tag plain">You say</span>
+        <h3>“I’m allergic to peanuts. My doctor confirmed it.”</h3>
+        <p>The model calls <code>add_lot</code> twice (your message, the doctor’s note), then <code>remember</code> “the user is allergic to peanuts”, learned from either one.</p>
+      </div>
+      <div class="box">
+        <span class="tag plain">You say</span>
+        <h3>“Is the satay at Spice Garden safe for me?”</h3>
+        <p>The model calls <code>search</code> with your question, gets the closest memories that are still valid, and answers from them.</p>
+      </div>
+      <div class="box">
+        <span class="tag plain">You say</span>
+        <h3>“That restaurant page was wrong. Forget it.”</h3>
+        <p>The model recalls the page by the id <code>add_lot</code> gave it when it saved the page, after you confirm: the page and every memory that depended only on it are erased. The first <code>recall</code> only shows what would go; if your app can show forms, cheesedb asks you itself, and the model cannot answer for you. For a memory you describe in words, it uses <code>search</code> first and shows you what it found.</p>
+      </div>
+      <div class="box">
+        <span class="tag plain">You say</span>
+        <h3>“What do you know about my health?”</h3>
+        <p>The allergy is still there: your own message and the doctor’s note still back it. The wrong conclusion about the satay is not.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot">
+      <div>
+        <a class="brand" href="index.html"><img src="assets/mark.svg" alt="">CheeseDB</a>
+        <p style="margin-top:6px"><small>A database engine purpose-built for AI memory.</small></p>
+      </div>
+      <nav aria-label="Project links">
+        <a href="index.html">Home</a>
+        <a href="numbers.html">Numbers</a>
+        <a href="limits.html">Limits</a>
+        <a href="https://github.com/govinargo-labs/cheesedb#use-from-ai-apps-mcp">MCP guide</a>
+        <a href="https://github.com/govinargo-labs/cheesedb/blob/main/THREAT_MODEL.md">Threat model</a>
+      </nav>
+    </div>
+    <p style="margin-top:20px"><small>Apache License 2.0. Created by <a href="https://www.linkedin.com/in/govinr/" rel="author">Govindaraj Rangaraj</a> at govinargo-labs, with <a href="https://github.com/govinargo-labs/cheesedb/graphs/contributors">contributions from the community</a> · <a href="https://www.linkedin.com/in/govinr/">consulting</a></small></p>
+  </footer>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

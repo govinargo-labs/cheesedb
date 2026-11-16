@@ -192,7 +192,7 @@ func TestInvalidFields(t *testing.T) {
 	cases := map[string]func([]byte) []byte{
 		"unknown version": func(b []byte) []byte { b[offVersion] = 2; return b },
 		"type 0":          func(b []byte) []byte { b[offType] = 0; return b },
-		"type 4":          func(b []byte) []byte { b[offType] = 4; return b },
+		"type 5":          func(b []byte) []byte { b[offType] = 5; return b },
 		"content shorter than salt": func(b []byte) []byte {
 			b = append(b[:offStructure], 1, 2, 3, 4, 5)
 			le.PutUint32(b[offLength:], HeaderSize+5)

@@ -6,7 +6,7 @@ package main
 //
 // Settings come from <home>/llm.conf (~/.cheesedb/llm.conf by default), one
 // "name = value" per line, # for comments. Environment variables win over
-// the file:
+// the file (the embedding settings for search are in embed.go):
 //
 //	base_url   LLM_BASE_URL   the server, e.g. http://localhost:8000/v1 (required)
 //	model      LLM_MODEL      the model name (required)
@@ -26,6 +26,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,11 +41,15 @@ type llm struct {
 }
 
 // llmSettings names each setting in llm.conf and its environment variable.
+// The embed_ ones are for search (embed.go).
 var llmSettings = map[string]string{
-	"base_url": "LLM_BASE_URL",
-	"model":    "LLM_MODEL",
-	"api_key":  "LLM_API_KEY",
-	"thinking": "LLM_THINKING",
+	"base_url":       "LLM_BASE_URL",
+	"model":          "LLM_MODEL",
+	"api_key":        "LLM_API_KEY",
+	"thinking":       "LLM_THINKING",
+	"embed_base_url": "EMBED_BASE_URL",
+	"embed_model":    "EMBED_MODEL",
+	"embed_api_key":  "EMBED_API_KEY",
 }
 
 func newLLM() (*llm, error) {
@@ -100,7 +105,7 @@ func readConf(path string) (map[string]string, error) {
 		name, value, ok := strings.Cut(line, "=")
 		name = strings.TrimSpace(name)
 		if _, known := llmSettings[name]; !ok || !known {
-			return nil, fmt.Errorf("%s line %d: want one of base_url, model, api_key, thinking = value", path, i+1)
+			return nil, fmt.Errorf("%s line %d: want one of base_url, model, api_key, thinking, embed_base_url, embed_model, embed_api_key = value", path, i+1)
 		}
 		conf[name] = strings.TrimSpace(value)
 	}
@@ -134,10 +139,10 @@ func (c *llm) chat(system, user string) (string, error) {
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("LLM request to %s: %w", c.base, err)
+		return "", fmt.Errorf("LLM request to %s: %w", safeURL(c.base), err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := readBody(resp.Body, 16<<20)
 	if err != nil {
 		return "", err
 	}
@@ -173,4 +178,25 @@ func (c *llm) chatJSON(system, user string, v any) error {
 		return fmt.Errorf("LLM returned invalid JSON (%v): %.300s", err, reply)
 	}
 	return nil
+}
+
+// readBody reads a server's answer, at most max bytes: a broken or hostile
+// server could otherwise send without end until memory runs out.
+func readBody(r io.Reader, max int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err == nil && int64(len(raw)) > max {
+		err = fmt.Errorf("the server's answer is larger than %d MiB", max>>20)
+	}
+	return raw, err
+}
+
+// safeURL is base for a message, without any user name or password in it:
+// errors go to stderr and, through remember's note, to the model.
+func safeURL(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return "the configured server"
+	}
+	u.User = nil
+	return u.String()
 }

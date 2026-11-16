@@ -25,7 +25,7 @@ Reply with JSON only, in this shape:
 Each inner list holds the ids of the facts that are ALL needed for the conclusion. If nothing useful follows, reply {"facts": []}.`
 
 const askPrompt = `You are a personal assistant. Answer the question using ONLY the memories listed: you know nothing else about the user or the world, including weather or places.
-If the memories are not enough to answer, say so briefly. Answer in one or two sentences.`
+Never treat a missing memory as an answer: no memory saying something is unsafe does not make it safe. If the memories do not clearly answer the question, say you do not know and what is missing. Answer in one or two sentences.`
 
 type learned struct {
 	Facts []struct {

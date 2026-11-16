@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CheeseDB architecture</title>
+<!--
+  Source of docs/architecture.png. Edit this file, then render it:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+      --window-size=2000,1690 --force-device-scale-factor=1.8 --hide-scrollbars \
+      --virtual-time-budget=8000 --screenshot=docs/architecture.png \
+      "file://$PWD/docs/diagram/architecture.html"
+-->
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=block" rel="stylesheet">
+<style>
+:root{
+  --ink:#16213A; --muted:#5B6478; --line:#DCE2EC;
+  --cheddar:#F5A400; --cheddar-soft:#FFF4D6; --cheddar-ink:#9A5B00;
+  --blue:#3655D4; --blue-bg:#EEF2FE; --blue-line:#C5D0F7;
+  --violet:#6B45D8; --violet-bg:#F3EFFE; --violet-line:#D6CBF7;
+  --green:#12866A; --green-bg:#E8F6F0; --green-line:#A9DCC9;
+  --red:#D63B3B; --red-soft:#FDE7E7;
+  --font:"Bricolage Grotesque",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:2000px;height:1690px;overflow:hidden;font-family:var(--font);color:var(--ink);
+  background:radial-gradient(circle at 92% 0%,#FFE9B8 0,transparent 32%),#F8F7F3;
+  background-image:radial-gradient(circle at 92% 0%,#FFE9B8 0,transparent 32%),radial-gradient(#E6E2D6 1px,transparent 1px);
+  background-size:auto,22px 22px;position:relative}
+.mono{font-family:var(--mono)}
+/* header */
+header{position:absolute;left:58px;top:30px;right:66px;height:96px;display:flex;align-items:center;gap:30px}
+.logo{display:flex;align-items:center;gap:18px}
+.logo img{width:86px;height:86px}
+.word{font-weight:800;font-size:66px;letter-spacing:-.03em}
+.word b{color:var(--cheddar)}
+.sep{width:2px;height:68px;background:#D9D4C4}
+.tag h1{font-size:29px;font-weight:800;letter-spacing:-.01em}
+.tag p{font-size:21px;color:var(--muted);margin-top:2px}
+.how{margin-left:auto;border:2px solid #F3D48A;background:#FFF8E6;border-radius:40px;padding:14px 30px;font-weight:800;font-size:22px;display:flex;gap:10px;align-items:center}
+.how span{color:var(--cheddar)}
+/* sections */
+.sec{position:absolute;left:44px;right:44px;border:2px solid;border-radius:30px;padding:22px 32px}
+.sec h2{display:flex;align-items:center;gap:14px;font-size:28px;font-weight:800;letter-spacing:.04em}
+.sec h2 i{font-style:normal;display:inline-grid;place-items:center;width:36px;height:36px;border-radius:50%;color:#fff;font-size:20px;letter-spacing:0}
+.sec h2 small{font-size:21px;font-weight:500;letter-spacing:0;color:var(--muted);margin-left:6px}
+.host{top:136px;height:470px;background:var(--blue-bg);border-color:var(--blue-line)}
+.host h2{color:var(--blue)} .host h2 i{background:var(--blue)}
+.mem{top:640px;height:440px;background:var(--violet-bg);border-color:var(--violet-line)}
+.mem h2{color:var(--violet)} .mem h2 i{background:var(--violet)}
+.disk{top:1126px;height:474px;background:var(--green-bg);border-color:var(--green-line)}
+.disk h2{color:var(--green)} .disk h2 i{background:var(--green)}
+.card{position:absolute;background:#fff;border-radius:18px;box-shadow:0 2px 0 rgba(22,33,58,.06),0 6px 18px rgba(22,33,58,.06)}
+.card h3{font-size:24px;font-weight:800;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.card h3 em{font-style:normal;margin-left:auto;font-size:15px;font-weight:500;color:var(--muted)}
+.sub{font-size:16px;color:var(--muted)}
+/* host */
+.app{left:32px;width:330px;height:76px;padding:12px 22px;display:flex;flex-direction:column;justify-content:center;text-align:center}
+.app b{font-size:22px} .app span{font-size:16px;color:var(--muted)}
+.mid{left:458px;width:430px;height:84px;padding:10px 20px;border:3px solid var(--cheddar);text-align:center;display:flex;flex-direction:column;justify-content:center}
+.mid b{font-family:var(--mono);font-size:22px;font-weight:600} .mid span{font-size:16px;color:var(--cheddar-ink);font-weight:600} .mid small{font-size:15px;color:var(--muted)}
+.emb{left:458px;top:372px;width:430px;height:66px;border:2.5px dashed #9AA6C8;background:#FAFBFF;box-shadow:none;padding:8px 18px;text-align:center}
+.emb b{font-size:19px} .emb span{display:block;font-size:14.5px;color:var(--muted)}
+.lib{left:980px;top:76px;width:880px;height:300px;padding:18px 24px}
+.pills{display:flex;gap:10px;flex-wrap:wrap}
+.pill{font-family:var(--mono);font-size:16px;font-weight:600;padding:6px 14px;border-radius:20px;background:#F1F4FB;border:1.5px solid var(--line)}
+.pill.big{font-size:20px;padding:9px 26px;color:var(--blue);background:#EEF2FE;border:2px solid var(--blue-line);border-radius:30px}
+.pill.v{background:#F3EFFE;border-color:var(--violet-line);color:#4C2DA8}
+.lbl{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin:12px 0 6px}
+/* arrows (svg overlay) */
+svg.arrows{position:absolute;left:0;top:0;width:2000px;height:1690px;pointer-events:none;overflow:visible}
+.al{font-family:var(--font);font-size:16px;font-weight:700}
+/* memory */
+.mcard{top:66px;height:230px;padding:16px 18px}
+table{border-collapse:separate;border-spacing:0 6px;width:100%;font-family:var(--mono);font-size:16px}
+th{font-family:var(--font);font-size:15px;color:var(--violet);text-align:left;padding:6px 10px;background:#F3EFFE}
+th:first-child{border-radius:8px 0 0 8px} th:last-child{border-radius:0 8px 8px 0}
+td{padding:5px 10px;border-top:1.5px solid var(--line);border-bottom:1.5px solid var(--line)}
+td:first-child{border-left:1.5px solid var(--line);border-radius:8px 0 0 8px} td:last-child{border-right:1.5px solid var(--line);border-radius:0 8px 8px 0}
+tr.dead td{color:#9AA2B4;background:#F7F8FA}
+.st{font-family:var(--font);font-weight:700;font-size:14px;padding:2px 12px;border-radius:12px}
+.st.alive{background:#DFF5E8;color:#1A7F47;border:1.5px solid #9FDDB9}
+.st.dead{background:#ECEEF2;color:#8A93A6;border:1.5px solid #D5D9E2}
+.vec{font-size:15px}
+/* disk */
+.files{left:32px;top:66px;width:470px;height:274px;padding:16px 22px}
+.frow{display:grid;grid-template-columns:28px 1fr;align-items:center;column-gap:8px;margin:0 0 12px}
+.frow span:last-child{grid-column:2;margin-top:-2px}
+.frow b{font-family:var(--mono);font-size:18px;font-weight:600}
+.frow span{font-size:15px;color:var(--muted)}
+.frow.ix b{color:#4C2DA8}
+.lanes{position:absolute;left:530px;top:66px;width:1330px}
+.lane{display:flex;align-items:flex-start;gap:18px;margin-bottom:14px}
+.lane .card{position:static}
+.lanehead{width:250px;padding-top:8px}
+.lanehead b{font-family:var(--mono);font-size:18px;font-weight:600;display:block}
+.lanehead span{font-size:15px;color:var(--muted)}
+.segcol{display:flex;flex-direction:column;align-items:center;gap:8px}
+.seg{width:220px;height:70px;padding:9px;text-align:center;border-radius:16px}
+.lane.ix .seg:not(.active):not(.next),.lane.ix .seal,.lane.ix .meta{border:2px solid var(--violet-line)}
+.lane.ix .seg:not(.active):not(.next) span{color:var(--violet)}
+.meta{width:220px;height:70px;padding:9px;text-align:center;border-radius:16px}
+.meta b{font-family:var(--mono);font-size:20px;font-weight:600;display:block}
+.meta span{font-size:14px;color:var(--muted)}
+.seg.next{background:transparent;box-shadow:none;border:2px dashed #AEB8CC}
+.seg.next b{color:#8A93A6}
+.seg.next span{color:#8A93A6;font-weight:600}
+.lanenote{font-size:15px;color:var(--muted);margin-left:268px}
+.seg b{font-family:var(--mono);font-size:20px;font-weight:600;display:block}
+.seg span{font-size:16px;font-weight:700;color:var(--green)}
+.seal{width:170px;height:40px;padding:8px;text-align:center;font-family:var(--mono);font-size:16px;font-weight:600}
+.active{background:var(--cheddar-soft);border:2.5px solid #F2C35A}
+.active span{color:var(--cheddar-ink)}
+.ixbox{left:1188px;top:146px;width:672px;height:132px;padding:12px 18px;border:2.5px solid var(--violet-line);background:#FBF9FF}
+.chain{left:32px;top:354px;width:1828px;height:96px;padding:12px 22px}
+.chain h4{font-size:19px;font-weight:800} .chain h4 span{font-size:15px;font-weight:500;color:var(--muted);margin-left:10px}
+.parts{display:flex;align-items:center;gap:14px;margin-top:8px}
+.part{height:44px;border-radius:12px;padding:4px 16px;text-align:center;display:flex;flex-direction:column;justify-content:center;font-size:16px;font-weight:800;line-height:1.1}
+.part small{font-size:13px;font-weight:700}
+.part.kept{border:2px solid var(--green-line);background:#F2FBF7} .part.kept small{color:var(--green)}
+.part.gone{border:2px dashed #F2C35A;background:#FFF8E6} .part.gone small{color:var(--cheddar-ink)}
+.part.ghost{border:2px dashed #D3D8E2;color:#9AA2B4;font-weight:600}
+.part.verify{background:var(--green);color:#fff;border-radius:12px}
+.part.verify small{color:#CFF3E5}
+.link{font-size:22px;color:#8A93A6}
+.flow{left:32px;top:310px;width:1828px;height:112px;padding:12px 20px;border:2.5px solid var(--violet-line)}
+.steps{display:flex;align-items:center;gap:10px;margin-top:8px}
+.step{flex:1;min-width:0;height:54px;border-radius:12px;padding:7px 12px;background:#F7F5FE;border:1.5px solid var(--violet-line);line-height:1.2}
+.step b{display:block;font-size:15px;color:#4C2DA8}
+.step span{font-size:13.5px;color:var(--muted)}
+.step.q{background:#fff;border-style:dashed}
+.step.m{background:#FAFBFF;border:1.5px dashed #9AA6C8}
+.step.m b{color:var(--ink)}
+.step.r{background:#E8F6F0;border-color:var(--green-line)}
+.step.r b{color:var(--green)}
+.arr{color:var(--violet);font-size:22px;font-weight:800}
+.ixfiles{display:flex;gap:10px;margin-top:6px}
+.ixfiles span{font-family:var(--mono);font-size:15px;font-weight:600;padding:5px 12px;border-radius:10px;background:#fff;border:1.5px solid var(--violet-line)}
+footer{position:absolute;left:0;right:0;bottom:0;height:78px;background:#121A2E;display:flex;align-items:center;padding:0 54px;gap:16px}
+footer::before{content:"";position:absolute;left:0;top:-8px;width:52%;height:8px;background:linear-gradient(90deg,var(--cheddar),#FFD36B)}
+footer img{width:44px;height:44px}
+footer .w{font-weight:800;font-size:32px;color:#fff;letter-spacing:-.02em} footer .w b{color:var(--cheddar)}
+footer .m{margin-left:auto;color:#fff;font-weight:800;letter-spacing:.24em;font-size:20px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><img src="../assets/mark.svg" alt=""><div class="word">Cheese<b>DB</b></div></div>
+  <div class="sep"></div>
+  <div class="tag"><h1>Memory that follows its sources:</h1><p>recall a source and what depended on it goes too; find what is left by meaning</p></div>
+  <div class="how"><span>⚡</span>How it works</div>
+</header>
+
+<!-- 1 HOST -->
+<section class="sec host">
+  <h2><i>1</i>HOST <small>your Go program, the cheesedb command, or an MCP app through cheesedb mcp</small></h2>
+  <div class="card app" style="top:76px"><b>Your Go program</b><span>uses the library directly</span></div>
+  <div class="card app" style="top:166px"><b>MCP app</b><span>Claude Code, Cursor, …</span></div>
+  <div class="card app" style="top:256px"><b>You, in a terminal</b><span>the cheesedb command</span></div>
+
+  <div class="card mid" style="top:162px"><b>cheesedb mcp &lt;agent&gt;</b><span>6 tools, none takes an agent</span><small>store opened for each tool call</small></div>
+  <div class="card mid" style="top:252px"><b>cheesedb &lt;command&gt;</b><span>search · ask · forget · recall · verify …</span><small>one command per feature</small></div>
+  <div class="card emb"><b>Embedding model (optional)</b><span>Ollama, LM Studio, oMLX or a hosted API</span></div>
+
+  <div class="card lib">
+    <h3>📖 cheesedb library <em>public API, package cheesedb · never calls a model</em></h3>
+    <div class="pills" style="margin-top:14px;align-items:center">
+      <span class="pill big">Open(dir)</span><span style="font-size:24px;color:var(--blue)">→</span><span class="pill big">OpenAgent(token)</span>
+      <span class="sub" style="margin-left:8px">takes the folder lock · only this agent’s data</span>
+    </div>
+    <div class="lbl">MEMORY</div>
+    <div class="pills"><span class="pill">AddLot</span><span class="pill">Remember</span><span class="pill">Recall</span><span class="pill">WouldRecall</span><span class="pill">Get</span><span class="pill">Active</span><span class="pill">Compact</span><span class="pill">Verify</span></div>
+    <div class="lbl">SEARCH BY MEANING (OPTIONAL)</div>
+    <div class="pills"><span class="pill v">CreateIndex</span><span class="pill v">Embed</span><span class="pill v">Search</span><span class="pill v">Indexes</span><span class="pill v">VerifyIndex</span><span class="pill v">DropIndex</span></div>
+  </div>
+</section>
+
+<!-- 2 IN MEMORY -->
+<section class="sec mem">
+  <h2><i>2</i>IN MEMORY <small>rebuilt by replay on open, never saved</small></h2>
+
+  <div class="card mcard" style="left:32px;width:410px">
+    <h3>🌳 Family tree <em style="color:var(--red);font-weight:700">after Recall(C)</em></h3>
+    <svg width="374" height="180" viewBox="0 0 374 180" style="margin-top:2px">
+      <defs>
+        <marker id="m1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="#6B45D8"/></marker>
+        <marker id="m2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="#A9B0C0"/></marker>
+        <marker id="m3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="#D63B3B"/></marker>
+      </defs>
+      <g font-family="Bricolage Grotesque" font-weight="800" font-size="17" text-anchor="middle">
+        <line x1="78" y1="40" x2="104" y2="78" stroke="#6B45D8" stroke-width="2.5" marker-end="url(#m1)"/>
+        <line x1="162" y1="40" x2="136" y2="78" stroke="#6B45D8" stroke-width="2.5" marker-end="url(#m1)"/>
+        <line x1="300" y1="44" x2="300" y2="74" stroke="#D63B3B" stroke-width="2.5" marker-end="url(#m3)"/>
+        <line x1="132" y1="112" x2="172" y2="140" stroke="#A9B0C0" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#m2)"/>
+        <line x1="282" y1="110" x2="214" y2="142" stroke="#A9B0C0" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#m2)"/>
+        <circle cx="66" cy="24" r="20" fill="#F3EFFE" stroke="#6B45D8" stroke-width="2.5"/><text x="66" y="30" fill="#6B45D8">A</text>
+        <circle cx="174" cy="24" r="20" fill="#F3EFFE" stroke="#6B45D8" stroke-width="2.5"/><text x="174" y="30" fill="#6B45D8">B</text>
+        <circle cx="300" cy="24" r="20" fill="#FDE7E7" stroke="#D63B3B" stroke-width="2.5"/><text x="300" y="30" fill="#D63B3B">C</text>
+        <text x="326" y="12" fill="#D63B3B" font-size="22">×</text>
+        <circle cx="120" cy="98" r="21" fill="#F3EFFE" stroke="#6B45D8" stroke-width="2.5"/><text x="120" y="104" fill="#6B45D8">M1</text>
+        <circle cx="300" cy="96" r="21" fill="#F4F5F8" stroke="#A9B0C0" stroke-width="2" stroke-dasharray="5 4"/><text x="300" y="102" fill="#A9B0C0">M2</text>
+        <circle cx="194" cy="156" r="21" fill="#F4F5F8" stroke="#A9B0C0" stroke-width="2" stroke-dasharray="5 4"/><text x="194" y="162" fill="#A9B0C0">M3</text>
+      </g>
+      <text x="0" y="176" font-family="Bricolage Grotesque" font-size="14" fill="#1A7F47" font-weight="600">M1 lives on via A and B</text>
+      <text x="374" y="176" font-family="Bricolage Grotesque" font-size="14" fill="#5B6478" text-anchor="end">M2, M3 died with C</text>
+    </svg>
+  </div>
+
+  <div class="card mcard" style="left:462px;width:450px">
+    <h3>🧮 Leg counters <em>alive while any leg holds</em></h3>
+    <table style="margin-top:6px">
+      <tr><th>id</th><th>memory</th><th>legs alive</th><th>status</th></tr>
+      <tr><td>4</td><td>M1</td><td>2 of 2</td><td><span class="st alive">alive</span></td></tr>
+      <tr class="dead"><td>5</td><td>M2</td><td>0 of 1</td><td><span class="st dead">dead</span></td></tr>
+      <tr class="dead"><td>6</td><td>M3</td><td>0 of 1</td><td><span class="st dead">dead</span></td></tr>
+    </table>
+  </div>
+
+  <div class="card mcard" style="left:932px;width:400px">
+    <h3>🗂 Offset table <em>id → place on disk</em></h3>
+    <table style="margin-top:6px">
+      <tr><th>id</th><th>segment</th><th>offset</th></tr>
+      <tr><td>1</td><td>1</td><td>0</td></tr>
+      <tr><td>4</td><td>1</td><td>890</td></tr>
+      <tr><td>6</td><td>2</td><td>0</td></tr>
+    </table>
+  </div>
+
+  <div class="card mcard" style="left:1352px;width:508px;border:2.5px solid var(--violet-line)">
+    <h3>🧭 Search index <em>optional</em></h3>
+    <table style="margin-top:6px" class="vec">
+      <tr><th>id</th><th>vector: 768 values, one byte each</th></tr>
+      <tr><td>4</td><td>26 · −64 · 121 · … (× scale)</td></tr>
+      <tr class="dead"><td>5</td><td><s>removed by Recall(C), at once</s></td></tr>
+      <tr class="dead"><td>6</td><td><s>removed by Recall(C), at once</s></td></tr>
+    </table>
+    
+  </div>
+  <div class="card flow">
+    <h3 style="font-size:21px">🔎 How a search runs <em>cheesedb search, ask and forget, and the MCP search tool</em></h3>
+    <div class="steps">
+      <div class="step q"><b>1 · The question</b><span>“can the user eat the satay?”</span></div><span class="arr">→</span>
+      <div class="step m"><b>2 · Embedding model</b><span>text → 768 numbers</span></div><span class="arr">→</span>
+      <div class="step"><b>3 · Search(index, vector, k)</b><span>scan bytes, re-check top from disk</span></div><span class="arr">→</span>
+      <div class="step"><b>4 · Only live memories</b><span>recalled ones are skipped</span></div><span class="arr">→</span>
+      <div class="step"><b>5 · Get(id)</b><span>the text comes from the log</span></div><span class="arr">→</span>
+      <div class="step r"><b>6 · Results</b><span>6: the satay is safe (0.81) …</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 ON DISK -->
+<section class="sec disk">
+  <h2><i>3</i>ON DISK <small>one store folder, one folder of segments per agent</small></h2>
+  <div class="card files">
+    <div class="frow"><span>🔒</span><b>LOCK</b><span>one open store per folder</span></div>
+    <div class="frow"><span>📁</span><b>616c696365/</b><span>the agent alice: folder name is hex</span></div>
+    <div class="frow"><span>📄</span><b>agent.key</b><span>SHA-256 of the token, never the token</span></div>
+    <div class="frow ix"><span>🧭</span><b>index-64656661756c74/</b><span>its search index “default” (optional)</span></div>
+  </div>
+
+  <div class="lanes">
+    <div class="lane">
+      <div class="lanehead"><b>616c696365/</b><span>memories and sources</span></div>
+      <div class="segcol"><div class="card seg"><b>000001.seg</b><span>🔒 sealed</span></div><div class="card seal">🔒 000001.seal</div></div>
+      <div class="segcol"><div class="card seg"><b>000002.seg</b><span>🔒 sealed</span></div><div class="card seal">🔒 000002.seal</div></div>
+      <div class="segcol"><div class="card seg active"><b>000003.seg</b><span>✎ active: appended to</span></div></div>
+      <div class="segcol"><div class="card seg next"><b>000004.seg</b><span>next, when full</span></div></div>
+    </div>
+    <div class="lane ix">
+      <div class="lanehead"><b>index-64656661756c74/</b><span>vectors, one per memory</span></div>
+      <div class="segcol"><div class="card meta"><b>index.meta</b><span>768 values, model name</span></div></div>
+      <div class="segcol"><div class="card seg"><b>000001.seg</b><span>🔒 sealed</span></div><div class="card seal">🔒 000001.seal</div></div>
+      <div class="segcol"><div class="card seg active"><b>000002.seg</b><span>✎ active: appended to</span></div></div>
+      <div class="segcol"><div class="card seg next"><b>000003.seg</b><span>next, when full</span></div></div>
+    </div>
+    <p class="lanenote">Both are logs with the same rules: a segment is sealed at 64 MiB and a new one starts. Erase rewrites only the segment that holds the record, in both.</p>
+  </div>
+
+  <div class="card chain">
+    <h4>Every record holds the hash of the one before it <span>a hash chain: change any record and every hash after it stops matching</span></h4>
+    <div class="parts">
+      <div class="part ghost" style="width:160px">previous record</div><span class="link">⛓</span>
+      <div class="part kept" style="width:250px">header: id + hashes<small>kept forever</small></div>
+      <div class="part kept" style="width:250px">structure: legs, type<small>kept forever</small></div>
+      <div class="part gone" style="width:420px">salt + content, and its vector<small>removed by Erase or Compact</small></div><span class="link">⛓</span>
+      <div class="part ghost" style="width:160px">next record</div>
+      <div class="part verify" style="width:250px;margin-left:auto">🛡 Verify<small>checks the whole chain</small></div>
+    </div>
+  </div>
+</section>
+
+<svg class="arrows" viewBox="0 0 2000 1690">
+  <defs>
+    <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9z" fill="#3655D4"/></marker>
+    <marker id="ak" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9z" fill="#16213A"/></marker>
+    <marker id="av" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9z" fill="#6B45D8"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9z" fill="#12866A"/></marker>
+    <marker id="ae" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9z" fill="#7D89AD"/></marker>
+  </defs>
+  <!-- host arrows: rows at y 250, 340, 430; the library card starts at x 1026 -->
+  <line x1="408" y1="250" x2="1020" y2="250" stroke="#3655D4" stroke-width="3" marker-end="url(#ab)"/>
+  <text class="al" x="720" y="240" fill="#3655D4" text-anchor="middle">direct calls</text>
+  <line x1="408" y1="340" x2="498" y2="340" stroke="#3655D4" stroke-width="3" marker-end="url(#ab)"/>
+  <text class="al" x="452" y="330" fill="#3655D4" text-anchor="middle">stdio</text>
+  <line x1="936" y1="340" x2="1020" y2="340" stroke="#3655D4" stroke-width="3" marker-end="url(#ab)"/>
+  <line x1="408" y1="430" x2="498" y2="430" stroke="#3655D4" stroke-width="3" marker-end="url(#ab)"/>
+  <line x1="936" y1="430" x2="1020" y2="430" stroke="#3655D4" stroke-width="3" marker-end="url(#ab)"/>
+  <!-- command and mcp to the embedding model and back -->
+  <line x1="680" y1="476" x2="680" y2="504" stroke="#7D89AD" stroke-width="2.5" marker-end="url(#ae)"/>
+  <line x1="760" y1="504" x2="760" y2="476" stroke="#7D89AD" stroke-width="2.5" marker-end="url(#ae)"/>
+  <text class="al" x="670" y="495" fill="#5B6478" text-anchor="end" font-size="14">question / memory text</text>
+  <text class="al" x="772" y="495" fill="#5B6478" font-size="14">vector, then Embed or Search</text>
+  <!-- library to memory -->
+  <line x1="1480" y1="516" x2="1480" y2="644" stroke="#16213A" stroke-width="3" marker-end="url(#ak)"/>
+  <text class="al" x="1496" y="626" fill="#16213A">every call goes through the agent’s ledger</text>
+  <!-- replay and append -->
+  <line x1="134" y1="1126" x2="134" y2="1086" stroke="#6B45D8" stroke-width="3" stroke-dasharray="7 6" marker-end="url(#av)"/>
+  <text class="al" x="152" y="1110" fill="#6B45D8">replay on open: <tspan font-weight="500" fill="#5B6478">the logs rebuild the graph and the index</tspan></text>
+  <line x1="1480" y1="1082" x2="1480" y2="1124" stroke="#12866A" stroke-width="3" marker-end="url(#ag)"/>
+  <text class="al" x="1496" y="1110" fill="#12866A">append + fsync: <tspan font-weight="500" fill="#5B6478">group commit, one fsync per batch</tspan></text>
+</svg>
+
+<footer><img src="../assets/mark.svg" alt=""><div class="w">Cheese<b>DB</b></div><div class="m">STORE • RECALL • SEARCH • VERIFY</div></footer>
+</body>
+</html>

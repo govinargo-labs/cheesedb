@@ -32,6 +32,11 @@ func TestStructureRoundTrip(t *testing.T) {
 	if err != nil || target != 42 || m != Strict || r != Erase {
 		t.Errorf("recall: got %d %d %d, %v", target, m, r, err)
 	}
+
+	tag := [tagSize]byte{1, 2, 3, 4, 5, 6, 7, 8}
+	if got, gotTag, err := decodeVector(encodeVector(1_000_000, tag)); err != nil || got != 1_000_000 || gotTag != tag {
+		t.Errorf("vector: got %d %x, %v", got, gotTag, err)
+	}
 }
 
 // TestCanonicalLegs: parents are sorted inside each leg, and the duplicate
@@ -93,6 +98,21 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 	for name, b := range recall {
 		if _, _, _, err := decodeRecall(b, self); !errors.Is(err, errMalformed) {
 			t.Errorf("recall %s: got %v, want errMalformed", name, err)
+		}
+	}
+
+	tag := make([]byte, tagSize)
+	vector := map[string][]byte{
+		"empty":             nil,
+		"target 0":          append(uv(0), tag...),
+		"no tag":            uv(3),
+		"short tag":         append(uv(3), tag[1:]...),
+		"trailing byte":     append(append(uv(3), tag...), 0),
+		"truncated uvarint": {0x80},
+	}
+	for name, b := range vector {
+		if _, _, err := decodeVector(b); !errors.Is(err, errMalformed) {
+			t.Errorf("vector %s: got %v, want errMalformed", name, err)
 		}
 	}
 

@@ -45,7 +45,7 @@ func newOpener(t *testing.T) (string, opener) {
 func session(t *testing.T, open opener, lines ...string) []map[string]any {
 	t.Helper()
 	var out strings.Builder
-	if err := serveMCP(strings.NewReader(strings.Join(lines, "\n")+"\n"), &out, open); err != nil {
+	if err := serveMCP(strings.NewReader(strings.Join(lines, "\n")+"\n"), &out, host(open, nil)); err != nil {
 		t.Fatal(err)
 	}
 	var msgs []map[string]any
@@ -109,20 +109,22 @@ func TestMCPHandshake(t *testing.T) {
 }
 
 // The README story through MCP messages, as Claude Code would send them.
+// The recall is two calls: a preview, then the same call with its code.
 func TestMCPReferenceExample(t *testing.T) {
 	_, open := newOpener(t)
-	msgs := session(t, open,
-		callLine("1", "add_lot", `{"source_type":"user_message","text":"I live in Pune"}`),
-		callLine("2", "add_lot", `{"source_type":"weather_tool","text":"Pune: rain"}`),
-		callLine("3", "remember", `{"text":"user lives in Pune","legs":[[1]]}`),
-		callLine("4", "remember", `{"text":"Pune is rainy","legs":[[2]]}`),
-		callLine("5", "recall", `{"id":2}`),
-		callLine("6", "list_memories", `{}`),
-	)
+	s := startSession(t, host(open, nil))
+	got := []string{
+		s.tool("1", "add_lot", `{"source_type":"user_message","text":"I live in Pune"}`),
+		s.tool("2", "add_lot", `{"source_type":"weather_tool","text":"Pune: rain"}`),
+		s.tool("3", "remember", `{"text":"user lives in Pune","legs":[[1]]}`),
+		s.tool("4", "remember", `{"text":"Pune is rainy","legs":[[2]]}`),
+		s.recall("5", `{"id":2}`),
+		s.tool("6", "list_memories", `{}`),
+	}
 	want := []string{"lot 1", "lot 2", "memory 3", "memory 4", "recalled 2; memories removed: 4", "3: user lives in Pune"}
-	for i, m := range msgs {
-		if got, isErr := toolText(t, m); got != want[i] || isErr {
-			t.Errorf("call %d = %q (isError %v), want %q", i+1, got, isErr, want[i])
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("call %d = %q, want %q", i+1, got[i], want[i])
 		}
 	}
 }
@@ -187,7 +189,7 @@ func TestMCPReleasesStoreBetweenCalls(t *testing.T) {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serveMCP(inR, outW, open); outW.Close() }()
+	go func() { done <- serveMCP(inR, outW, host(open, nil)); outW.Close() }()
 
 	io.WriteString(inW, callLine("1", "add_lot", `{"source_type":"user_message","text":"hi"}`)+"\n")
 	if _, err := bufio.NewReader(outR).ReadString('\n'); err != nil {

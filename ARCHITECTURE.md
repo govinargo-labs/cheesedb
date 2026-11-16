@@ -5,7 +5,7 @@ How the engine is built, as it stands now.
 ![cheesedb internals: in-memory state rebuilt by replay, append-only
 segments on disk, and the three-part record](docs/architecture.png)
 
-The picture must match this file. When a design change affects anything shown in it, the picture gets updated too.
+The picture must match this file. When a design change affects anything shown in it, the picture gets updated too: edit its source, [docs/diagram/architecture.html](docs/diagram/architecture.html), and render it with the command at the top of that file.
 
 The `cheesedb` command (`cmd/cheesedb/`) is a command-line tool and LLM demo for trying everything.
 
@@ -36,6 +36,7 @@ Signatures (package `cheesedb`, wrapping `internal/ledger`):
 - `AddLot(sourceType string, data []byte) (ID, error)`
 - `Remember(data []byte, legs ...Leg) (ID, error)`
 - `Recall(id ID, mode Mode, reason Reason) ([]ID, error)`: returns the memories it newly removed, in id order.
+- `WouldRecall(id ID, mode Mode) ([]ID, error)`: what `Recall` would remove now, without writing anything (a preview, to ask a person before a permanent recall). It walks like `Recall` but keeps the deaths it imagines in maps on the side; a write in between can change the answer, so `Recall`'s own result is the one to trust.
 - `Active() ([]ID, error)`
 - `Get(id ID) (Item, error)`
 - `Verify() ([32]byte, error)`
@@ -52,17 +53,31 @@ cheesedb/             module github.com/govinargo-labs/cheesedb
   internal/record/    one record <-> bytes. No files; pure functions.
   internal/logfile/   the segments: Append + fsync, replay on Open, torn-tail recovery.
   internal/ledger/    memory logic: lots, legs, recall. state.go is the pure in-memory graph.
-  internal/tools/     the five model-facing tools (add_lot, remember, recall, get,
-                      list_memories): JSON schemas plus the code that runs one call on one
-                      agent handle. No tool takes an agent. Knows nothing about MCP.
+                      vector.go: vector indexes (section 9).
+  internal/vecindex/  the in-memory vectors of one index (one byte per value) and exact
+                      search. No files, no locks: the ledger hands it a function that
+                      reads a record's exact vector.
+  internal/tools/     the model-facing tools (add_lot, remember, recall, get,
+                      list_memories, and search when the host has an embedding model):
+                      JSON schemas plus the code that runs one call. The host opens the
+                      agent and supplies the model; the tools call the model before
+                      opening the store, so a slow model never holds the lock. With a
+                      model, remember also embeds into the index "default". No tool takes
+                      an agent. Knows nothing about MCP.
   internal/benchgen/  the shared benchmark workload
   bench/              separate module: SQLite, PostgreSQL and Neo4j comparison
+  examples/vector-search/  a runnable demo of vector search and recall
+                      (`go run ./examples/vector-search`)
   cmd/cheesedb/       the `cheesedb` command: tries every feature, plus an LLM demo
                       (`go install ./cmd/cheesedb`, then `cheesedb help`). Keeps its
                       data in ~/.cheesedb or $CHEESEDB_DIR. Not part of the library.
                       `cheesedb mcp <agent>` (mcp.go) serves internal/tools to an MCP
                       app over stdin/stdout, one JSON-RPC message per line, and opens
-                      the store only for the length of each tool call.
+                      the store only for the length of each tool call. embed.go is the
+                      embedding client (OpenAI-compatible /embeddings); search.go has
+                      `search`, `ask` (search, then the chat model answers from those
+                      memories only), `forget` (search, preview with WouldRecall,
+                      erase after a yes), `embed` (rebuild the index) and `index`.
 ```
 
 Encoding is kept separate from file I/O so every byte of the format can be tested without touching the disk. `internal/` prevents other modules importing the building blocks directly.
@@ -322,6 +337,10 @@ Ledger ready (Report says what was replayed or cut)
   616c696365/               hex of the agent's name ("alice"), 0700
     agent.key               SHA-256 of the agent's token (never the token): version, hash, CRC-32C
     000001.seg  000001.seal ...
+    index-64656661756c74/   a vector index ("default"), only if one was created (section 9)
+      index.meta            dims, encoding, metric, label: version, fields, CRC-32C
+      000001.seg  000001.seal ...   the index's own log of VECTOR records
+    .tmp-index-<random>/    only during an index create or drop; opening the agent removes leftovers
   .tmp-<random>/            only during a create or delete; Open removes leftovers
 ```
 
@@ -336,7 +355,7 @@ Ledger ready (Report says what was replayed or cut)
   - Systems with neither (for example Solaris, AIX) get no lock (README Limits).
   - Locks on network file systems (NFS, SMB) may not work; use a local disk.
 - **`cheesedb.Open`** then reads every `agent.key` into an in-memory map from token hash to folder. A missing or damaged key is `ErrCorrupt` for the whole store, rather than silently hiding that agent.
-- **One ledger per agent:** the store keeps a list of open agents, guarded by one in-memory lock that is held only to create, open, close or delete an agent. Opening an agent twice gives two handles on one ledger, so there is never a second writer. An agent's reads and writes never take the store's lock.
+- **One ledger per agent:** the store keeps a list of open agents, guarded by one in-memory lock that is held only to create, open, close or delete an agent. Opening an agent twice gives two handles on one ledger, so there is never a second writer. An agent's reads and writes never take the store's lock. Closing an agent's last handle waits for its write in progress (an Embed or a Compact can take a while), so it runs without the store's lock: meanwhile the agent is listed as closing, `OpenAgent` for it waits, and `DeleteAgent` refuses.
   - The first open of an agent replays its log while holding that lock, so other agents' opens wait during it (their reads and writes do not).
 - Inside it, the agent's log is split into numbered **segment** files: `000001.seg`, `000002.seg`, ... Together they form ONE log: ids and the hash chain run on from one segment into the next.
 - Exactly one segment is **active**: the highest-numbered one. New records are only ever appended to its end ("append + fsync" in the picture).
@@ -345,7 +364,7 @@ Ledger ready (Report says what was replayed or cut)
 - If creating the next segment fails, the log is broken until reopened, the same rule as a failed write (section 6).
 - On Windows, every directory fsync is skipped: `os.File.Sync` on a directory returns "Access is denied", so `syncDir` is a no-op there (README Limits). That covers the directory entries for new segments, renames and seal files. NTFS journals metadata, but those entries are not guaranteed on disk when the call returns.
 - Records are never edited in place. The only rewrite is redaction (section 7), and it rewrites a single segment.
-- Record types: `1 = LOT`, `2 = MEMORY`, `3 = RECALL`.
+- Record types: `1 = LOT`, `2 = MEMORY`, `3 = RECALL`, and `4 = VECTOR`, which appears only in vector index logs (section 9).
 - IDs are 1, 2, 3, ... per agent and assigned by the log, never by a caller. A record's parents always have smaller IDs, so ID order is a topological order.
 
 Why segments (real-world term: a **segmented log**, as in Kafka or etcd's WAL):
@@ -492,7 +511,7 @@ offset  size  field
 4       4     crc32          CRC-32C over length + body
 --- body part 1: fixed header, always 150 bytes ---
 8       1     version        format version, currently 1
-9       1     type           1=LOT 2=MEMORY 3=RECALL
+9       1     type           1=LOT 2=MEMORY 3=RECALL 4=VECTOR (index logs only)
 10      8     id             monotonic uint64
 18      32    prevHash       chain hash of the previous record (zeros for record 1)
 50      4     keyID          reserved for encryption, 0 in v1
@@ -653,3 +672,122 @@ after:   [length|crc] [header] [structure: legs, ...]
 2. Replay is deterministic: same log gives the same state; no clock or randomness during replay.
 3. Records are identified by `id`, never by byte offset (offsets change after redaction).
 4. Redaction is deterministic: same input gives the same output segment.
+
+## 9. Vector indexes
+
+An agent can have vector indexes, to find lots and memories **by meaning**. The caller computes a vector (an embedding) for a lot or memory with its own model and stores it with `Embed`; `Search` returns the ids closest to a query vector, best first. cheesedb never calls a model.
+
+An agent that never creates an index runs none of this: its files, its head fingerprint and every existing call are exactly as without indexes. The only added cost is one directory listing when the agent opens.
+
+### Layout: a second log per index
+
+Each index is a folder inside the agent's folder (section 3), named `index-` plus the hex of the index name (1-100 bytes), holding:
+
+- `index.meta`, written once at creation: version, `dims` (1-8192 values per vector), encoding (1 = float32), metric (1 = cosine), a label of up to 255 bytes (for example the embedding model's name; never interpreted), CRC-32C. It is written into a temporary folder `.tmp-index-<random>`, fsynced, and the folder is renamed into place, so an index exists completely or not at all. The temporary name never ends in `.tmp`, which the log would try to remove as a file.
+- its own log, written by the same `internal/logfile` code as the main log, with the same options (segment size): segments, seals, group commit, fsync, torn-tail recovery, hash chain and redaction all apply unchanged. It has its own ids, starting at 1, and its own head (`VerifyIndex`).
+
+The log's segment scan only looks at files ending in `.seg`, `.seal` and `.tmp`, so it never sees index folders; versions without indexes open a store that has them (tested).
+
+Vectors are not stored in the main log, for four reasons:
+
+- every open would replay and hash them (a 768-value vector is about 3 KB, ten times a typical memory record);
+- `Get` would read them with every memory;
+- re-embedding with a new model would change the main head, which should change only when knowledge changes;
+- older versions would refuse a main log with an unknown record type.
+
+### The VECTOR record
+
+Record type 4, written only to index logs. The ledger refuses it in a main log (`ErrCorrupt`).
+
+```
+structure:  target id (uvarint): the lot or memory in the MAIN log
+            tag (8 bytes): the first 8 bytes of that record's chain hash
+content:    16-byte salt, then dims x 4 bytes (float32, little-endian)
+```
+
+The vector is content, so redaction removes it and keeps the link: after an erase, the record still says "there was a vector for memory 41". On load the content must be empty (redacted) or exactly `dims x 4` bytes of finite values forming a vector of length 1.
+
+The tag ties the vector to one exact record, not just to an id. Ids are only unique within one history: if the main log is restored from an older copy and the index is not, the next lot gets the id of a lost one, and an id-only vector would quietly describe the wrong item (and keep the lost item's vector on disk with nothing to erase it). A chain hash differs for every record of every history, so a tag that does not match marks the index as written against other files. Eight bytes are plenty to catch a mix-up; the tag is a consistency check, not a defence against someone who can rewrite the files (the chain hash covers no secret, and the salted digest inside it leaks nothing). Checking it costs one main-log read per vector, at `Embed` and when the index is loaded.
+
+Vectors are checked and scaled to length 1 before they are written (NaN, infinity, all-zero or wrong-length vectors are refused). Cosine similarity is then a plain dot product, and replay reads the stored values without recomputing anything.
+
+### The main log is the truth
+
+1. A recall is written to the main log first; the indexes follow it.
+2. A vector whose target is dead is never searchable; a vector whose target was erased is erased.
+3. A lot or memory without a vector is fine: search does not find it until it is embedded.
+4. An index that cannot be loaded or written never stops the agent opening; only that index's calls fail. Erase and Compact are refused (before writing anything) until the index is dropped, because they could not erase its vectors. The same goes for a dropped index whose folder could not be deleted yet (below).
+5. After a failed write to an index log (a full disk, for example), the index is closed and read again from disk on its next use. Some records of the failed write may have reached the disk; reading the log again is the only way to know which, so an Erase can find them.
+
+### In memory
+
+An index is loaded the first time it is used (`Embed`, `Search`, `Indexes`, `VerifyIndex`, an Erase, `Compact`), by replaying its log. It is one flat block of one-byte values (int8, "scalar quantization"), one row per embedded target, plus a table from target id to row (`internal/vecindex`). Each row keeps a scale (value ≈ scale × byte) and a **slack**: the length of what the rounding left over. By the Cauchy-Schwarz inequality, for any query of length 1 the score from the bytes is within the slack of the exact score. The exact float32 values stay only on disk.
+
+- **Search** is exact, in two passes. The first computes an estimate for every row from its bytes (split across CPU cores when there are many rows) and keeps the best `k` sure scores (estimate minus slack) in a small heap; the `k`-th of them is the bar. The second reads, from the index log on disk, the exact float32 vector of every row whose estimate plus slack reaches the bar, and scores those exactly. A row below the bar cannot beat `k` rows that are sure to score more, so the answer is the one a float32 scan of every row would give. The slack also covers float32 rounding in both sums. On ordinary embeddings the second pass reads a handful of vectors. The search holds the index's read lock throughout, and a vector always leaves the index before its record is erased, so every record it reads still has its values. Equal scores are ordered by id, so the answer is deterministic. Results are then checked against the ledger's state, so an item that died a moment earlier is never returned. If one was dropped that way, the search waits for the recall that killed it (which removes its rows before letting go of the write lock) and runs again, so it still returns `k` live results; after three tries it returns what it has.
+- **Removing** a row moves the last row into its place (swap-remove). There is no "deleted" flag: a recalled item's vector is gone from memory at once.
+- **Replacing** a vector overwrites its row. The old record goes on a stale list.
+
+The stale list holds VECTOR records whose content is still on disk but which are no longer searchable (target dead, or replaced). Compact and Erase redact from it.
+
+### Flows
+
+**Embed** holds the agent's write lock from the "is it alive?" check to the in-memory update, exactly like `Remember`, so a recall cannot kill the target in between. The vector is appended to the index log (fsync), then becomes searchable. `EmbedBatch` checks every item first, then writes them in batches of at most `MaxBatchBytes`.
+
+**Recall** removes the rows of everything that died from every loaded index, right after the state is updated. Indexes not loaded yet need nothing: loading skips dead targets.
+
+**Recall with Erase:**
+
+```
+ 1. load every index on disk; if one fails: error, nothing written
+ 2. append the RECALL to the main log (fsync); update the state
+ 3. remove the dead from every index (to the stale lists)
+ 4. redact the VECTOR records of the erased ids, in every index
+ 5. redact the main-log records of the erased ids
+```
+
+Vectors go before text on purpose. If anything stops between 2 and 5, some text of the erase is still on disk, so the next `Open` finds the erase unfinished (section 7) and finishes it: it loads every index, redacts the vectors of those ids, then the text (`Report.FinishedErase`). With text first, a crash between 4 and 5 would leave vectors of erased text with nothing in the main log to say so.
+
+If at that `Open` an index cannot be loaded or rewritten, `Open` still erases the vectors it can reach, but keeps the text, and the agent opens with the erase still pending: `Report.UnfinishedErase` counts the items, `Report.EraseErr` says why. Erasing the text alone would bring back the problem above. The recall itself stands (the items are dead and never searchable). Dropping or repairing the index, then `Compact` or the next `Open`, finishes the erase.
+
+**Loading an index** replays its log and applies each record:
+
+| VECTOR record | Action |
+|---|---|
+| target is not a lot or memory in the main log, or its tag does not match that record | the index is `ErrCorrupt` (files from two different times, such as a restored main log) |
+| vector not of length 1, or with a NaN or infinity | the index is `ErrCorrupt` (not written by `Embed`) |
+| redacted | skipped |
+| target alive | searchable; a later vector for the same target replaces it |
+| target dead | stale (on disk until Compact) |
+| target erased (redacted in the main log) | redacted now |
+
+The last rule finishes any erase that did not reach this index: an index that could not be loaded at the time, or an erase run by a version without indexes.
+
+**Compact** loads every index, redacts every stale record (dead targets and replaced vectors), then compacts the main log as before. Its return value still counts main-log records only.
+
+**DropIndex** closes the index, renames its folder to `.tmp-index-<random>`, forgets it, fsyncs the agent folder and removes it. Dropping is also the way out of a damaged index. The list of indexes changes as soon as a rename succeeds (here and in `CreateIndex`), so a failed fsync after it never leaves an index that is listed but missing, or present but unlisted. A `.tmp-index-` folder that cannot be deleted may still hold vectors, so the next `Open` tries again, and Erase and Compact try again and refuse while it stays.
+
+### Crashes
+
+Inside one index log, section 6 applies unchanged (a torn tail is cut and reported in that index's `Report`). Between the two logs:
+
+| Situation | What happens |
+|---|---|
+| Crash after a memory is written, before its vector | Nothing to fix: it is not searchable until embedded |
+| Crash during an Embed batch | A torn tail in the index log, cut on load; the Embed was never acknowledged |
+| Crash after an Untrusted recall | Loading skips the dead targets |
+| Crash during an Erase | The next `Open` finishes it, vectors first (above) |
+| A write to the index log fails | The index is read again on next use, so records that reached the disk are known (rule 5) |
+| Crash during an Erase, and the index is broken at the next `Open` | The agent opens; the erase stays pending, text included (`Report.UnfinishedErase`) |
+| Crash during create or drop | A `.tmp-index-` folder, removed when the agent is next opened, or before the next Erase or Compact |
+| Index older than the main log (restored alone) | Missing vectors are harmless; dead targets are skipped; vectors of erased ones are erased on load |
+| Main log older than the index (restored alone) | Vectors for ids the main log lacks, or whose tag does not match, make the index `ErrCorrupt`; drop it and embed again |
+
+Back up the whole agent folder, index folders included, in one go.
+
+### Costs
+
+- RAM: `dims` bytes per vector plus about 28 bytes of bookkeeping (scale, slack, target, record), plus 4 bytes per main-log id for the target table (768 values: about 0.8 KB per vector, a quarter of float32).
+- Disk: about `dims x 4 + 180` bytes per vector.
+- The first use of an index replays its whole log, and reads each vector's target record from the main log to check its tag.
+- Exact search compares the query with every vector's bytes, then reads a few exact vectors from disk: its time grows with the number of vectors.
+- An erase rewrites every index segment that holds an erased vector, as well as the main-log segments.

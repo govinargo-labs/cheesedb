@@ -132,6 +132,33 @@ func TestRecallMemoryDirectly(t *testing.T) {
 	}
 }
 
+// TestWouldRecall: the preview names what Recall then removes, writes
+// nothing, and rejects what Recall rejects.
+func TestWouldRecall(t *testing.T) {
+	l := mustOpen(t, t.TempDir())
+	defer l.Close()
+	r := buildRef(t, l)
+	head := must(l.Verify())
+	if got := must(l.WouldRecall(r.c, Fair)); !slices.Equal(got, []ID{r.m2, r.m3}) {
+		t.Fatalf("WouldRecall(C, Fair) = %v, want [M2 M3]", got)
+	}
+	if got := must(l.WouldRecall(r.b, Strict)); !slices.Equal(got, []ID{r.m1, r.m3}) {
+		t.Fatalf("WouldRecall(B, Strict) = %v, want [M1 M3]", got)
+	}
+	if must(l.Verify()) != head || len(l.Active()) != 3 {
+		t.Fatal("WouldRecall changed the ledger")
+	}
+	if _, err := l.WouldRecall(99, Fair); !errors.Is(err, ErrUnknownID) {
+		t.Fatalf("unknown id: %v", err)
+	}
+	if _, err := l.WouldRecall(r.c, Mode(9)); !errors.Is(err, ErrBadArgument) {
+		t.Fatalf("bad mode: %v", err)
+	}
+	if got := must(l.Recall(r.c, Fair, Untrusted)); !slices.Equal(got, []ID{r.m2, r.m3}) {
+		t.Fatalf("Recall(C) removed %v after the preview", got)
+	}
+}
+
 // TestFairThenStrict: recalling the same lot again, more strictly, removes
 // what the Fair recall left alive.
 func TestFairThenStrict(t *testing.T) {
