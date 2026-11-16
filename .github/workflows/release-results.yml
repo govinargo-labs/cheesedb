@@ -1,0 +1,63 @@
+name: release test results
+
+# When a release is published, runs the full test suite on Linux, macOS and
+# Windows and attaches each run's output to the release. Actions logs expire
+# after a few months; release files do not, so anyone can still see what
+# was tested for a version. Run it by hand to attach results to an older
+# release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test and attach the results to (for example v0.3.0)
+        required: true
+
+# Writing is needed only to attach files to the release.
+permissions:
+  contents: write
+
+jobs:
+  results:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # no dependencies, so no go.sum to key a cache on
+      # A failing run is attached too, with its exit status: Windows is not
+      # supported yet, and its results should be visible, not hidden.
+      - name: Run the tests
+        id: run
+        shell: bash
+        run: |
+          file="test-results-$TAG-$RUNNER_OS.txt"
+          status=0
+          {
+            echo "cheesedb $TAG, commit $(git rev-parse HEAD)"
+            echo "$(go version), $RUNNER_OS $RUNNER_ARCH"
+            echo "run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '$ go vet ./...'
+            go vet ./...
+            echo
+            echo '$ go test -race -count=1 -v ./...'
+            go test -race -count=1 -v ./...
+          } >"$file" 2>&1 || status=$?
+          echo "exit status: $status" >>"$file"
+          echo "file=$file" >>"$GITHUB_OUTPUT"
+      - name: Attach the results to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "${{ steps.run.outputs.file }}" --clobber

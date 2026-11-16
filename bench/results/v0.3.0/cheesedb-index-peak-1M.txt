@@ -1,0 +1,30 @@
+$ env CHEESEDB_BENCH_INDEX=1 /usr/bin/time -l $SCRATCH/ledger.test -test.run ^$ -test.bench Index/1M/ -test.benchtime=3x -test.count=1
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/internal/ledger
+cpu: Apple M1 Max
+BenchmarkIndex/1M/store-vectors-10         	       3	41598584987 ns/op
+BenchmarkIndex/1M/search-10                	       3	 138305792 ns/op	      1117 heap-MB	      3257 index-B/memory
+BenchmarkIndex/1M/open+search-10           	       3	7384409361 ns/op
+BenchmarkIndex/1M/recall-erase-10          	       3	 170276903 ns/op
+BenchmarkIndex/1M/open+recall-erase-10     	       3	7577966555 ns/op
+BenchmarkIndex/1M/open+recall-untrusted-10 	       3	 698961625 ns/op
+PASS
+      235.17 real       146.73 user        21.60 sys
+          5224955904  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              327876  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               34563  signals received
+               59120  voluntary context switches
+              463778  involuntary context switches
+       1539693191983  instructions retired
+        509243482899  cycles elapsed
+          4445900496  peak memory footprint

@@ -1,0 +1,84 @@
+$ env CHEESEDB_PG=host=127.0.0.1 port=54329 user=$USER $SCRATCH/bench.test -test.run ^$ -test.bench . -test.benchmem -test.count=3 -test.timeout 180m
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/bench
+cpu: Apple M1 Max
+BenchmarkStartup/sqlite/10k-10  	   10000	    103768 ns/op	       232.7 disk-B/memory	    4159 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/10k-10  	   10000	    102871 ns/op	       232.7 disk-B/memory	    4141 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/10k-10  	   10000	    104611 ns/op	       232.7 disk-B/memory	    4138 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/100k-10 	   10000	    103872 ns/op	       245.1 disk-B/memory	    4140 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/100k-10 	   10000	    104110 ns/op	       245.1 disk-B/memory	    4139 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/100k-10 	   10000	    102783 ns/op	       245.1 disk-B/memory	    4140 B/op	     102 allocs/op
+BenchmarkStartup/sqlite/1M-10   	   10000	    104596 ns/op	       249.4 disk-B/memory	    4299 B/op	     103 allocs/op
+BenchmarkStartup/sqlite/1M-10   	   10000	    106428 ns/op	       249.4 disk-B/memory	    4299 B/op	     103 allocs/op
+BenchmarkStartup/sqlite/1M-10   	   10000	    103889 ns/op	       249.4 disk-B/memory	    4299 B/op	     103 allocs/op
+BenchmarkStartup/postgres/10k-10         	     399	   2873562 ns/op	       561.2 disk-B/memory	   89393 B/op	     314 allocs/op
+BenchmarkStartup/postgres/10k-10         	     427	   2879984 ns/op	       561.2 disk-B/memory	   89366 B/op	     314 allocs/op
+BenchmarkStartup/postgres/10k-10         	     416	   3016718 ns/op	       561.2 disk-B/memory	   89371 B/op	     314 allocs/op
+BenchmarkStartup/postgres/100k-10        	     361	   3874500 ns/op	       546.2 disk-B/memory	   89387 B/op	     314 allocs/op
+BenchmarkStartup/postgres/100k-10        	     391	   3047527 ns/op	       546.2 disk-B/memory	   89385 B/op	     314 allocs/op
+BenchmarkStartup/postgres/100k-10        	     336	   3724251 ns/op	       546.2 disk-B/memory	   89390 B/op	     314 allocs/op
+BenchmarkStartup/postgres/1M-10          	     394	   2961583 ns/op	       545.5 disk-B/memory	   89279 B/op	     314 allocs/op
+BenchmarkStartup/postgres/1M-10          	     405	   3001165 ns/op	       545.5 disk-B/memory	   89372 B/op	     314 allocs/op
+BenchmarkStartup/postgres/1M-10          	     410	   2986765 ns/op	       545.5 disk-B/memory	   89391 B/op	     314 allocs/op
+BenchmarkGet/sqlite/10k-10               	  220254	      5487 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/10k-10               	  221426	      5570 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/10k-10               	  214422	      5631 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/100k-10              	  169646	      6962 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/100k-10              	  175508	      6925 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/100k-10              	  164644	      6862 ns/op	    1007 B/op	      27 allocs/op
+BenchmarkGet/sqlite/1M-10                	  161053	      7399 ns/op	    1008 B/op	      27 allocs/op
+BenchmarkGet/sqlite/1M-10                	  162594	      7377 ns/op	    1008 B/op	      27 allocs/op
+BenchmarkGet/sqlite/1M-10                	  163969	      7371 ns/op	    1008 B/op	      27 allocs/op
+BenchmarkGet/postgres/10k-10             	   23683	     59256 ns/op	    1513 B/op	      30 allocs/op
+BenchmarkGet/postgres/10k-10             	   22737	     52393 ns/op	    1513 B/op	      30 allocs/op
+BenchmarkGet/postgres/10k-10             	   23672	     50339 ns/op	    1513 B/op	      30 allocs/op
+BenchmarkGet/postgres/100k-10            	   23481	     49994 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkGet/postgres/100k-10            	   22204	     54196 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkGet/postgres/100k-10            	   26194	     53506 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkGet/postgres/1M-10              	   16203	     80253 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkGet/postgres/1M-10              	   17868	     59290 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkGet/postgres/1M-10              	   23100	     51226 ns/op	    1513 B/op	      31 allocs/op
+BenchmarkRemember/sqlite/10k-10          	     272	   4780541 ns/op	    2264 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/10k-10          	     236	   5044212 ns/op	    2263 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/10k-10          	     242	   4949695 ns/op	    2264 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/100k-10         	     238	   5104633 ns/op	    2259 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/100k-10         	     230	   5146527 ns/op	    2263 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/100k-10         	     234	   5216745 ns/op	    2254 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/1M-10           	     202	   5625669 ns/op	    2252 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/1M-10           	     222	   5545574 ns/op	    2254 B/op	      64 allocs/op
+BenchmarkRemember/sqlite/1M-10           	     232	   5487229 ns/op	    2249 B/op	      64 allocs/op
+BenchmarkRemember/postgres/10k-10        	     198	   6098662 ns/op	    3376 B/op	      77 allocs/op
+BenchmarkRemember/postgres/10k-10        	     193	   5870119 ns/op	    3368 B/op	      77 allocs/op
+BenchmarkRemember/postgres/10k-10        	     195	   6150299 ns/op	    3368 B/op	      77 allocs/op
+BenchmarkRemember/postgres/100k-10       	     176	   6336464 ns/op	    3378 B/op	      77 allocs/op
+BenchmarkRemember/postgres/100k-10       	     192	   6278675 ns/op	    3369 B/op	      77 allocs/op
+BenchmarkRemember/postgres/100k-10       	     223	   5586029 ns/op	    3366 B/op	      77 allocs/op
+BenchmarkRemember/postgres/1M-10         	     193	   7065581 ns/op	    3374 B/op	      77 allocs/op
+BenchmarkRemember/postgres/1M-10         	     193	   6136769 ns/op	    3367 B/op	      77 allocs/op
+BenchmarkRemember/postgres/1M-10         	     181	   6767743 ns/op	    3368 B/op	      77 allocs/op
+BenchmarkRecall/sqlite/10k-10            	     165	   7117172 ns/op	   59669 B/op	    1667 allocs/op
+BenchmarkRecall/sqlite/10k-10            	     168	   7084739 ns/op	   59667 B/op	    1667 allocs/op
+BenchmarkRecall/sqlite/10k-10            	     192	   7199361 ns/op	   59732 B/op	    1667 allocs/op
+BenchmarkRecall/sqlite/100k-10           	     160	   7123358 ns/op	   59692 B/op	    1667 allocs/op
+BenchmarkRecall/sqlite/100k-10           	     163	   6996038 ns/op	   59814 B/op	    1668 allocs/op
+BenchmarkRecall/sqlite/100k-10           	     183	   7440034 ns/op	   59868 B/op	    1668 allocs/op
+BenchmarkRecall/sqlite/1M-10             	     183	   7235077 ns/op	   59667 B/op	    1667 allocs/op
+BenchmarkRecall/sqlite/1M-10             	     183	   7022536 ns/op	   59872 B/op	    1669 allocs/op
+BenchmarkRecall/sqlite/1M-10             	     174	   7254036 ns/op	   60006 B/op	    1670 allocs/op
+BenchmarkRecall/postgres/10k-10          	     117	   9927152 ns/op	   86718 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/10k-10          	     100	  10863077 ns/op	   86699 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/10k-10          	     120	  10274691 ns/op	   86659 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/100k-10         	      98	  10605500 ns/op	   86688 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/100k-10         	     121	   9375636 ns/op	   86652 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/100k-10         	     126	   9924331 ns/op	   86668 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/1M-10           	     122	  10154923 ns/op	   86669 B/op	    1999 allocs/op
+BenchmarkRecall/postgres/1M-10           	     100	  10010653 ns/op	   86631 B/op	    1998 allocs/op
+BenchmarkRecall/postgres/1M-10           	     120	  10103731 ns/op	   86671 B/op	    1999 allocs/op
+BenchmarkRecallLarge/sqlite/1M-10        	       5	 236476083 ns/op	28655356 B/op	  798391 allocs/op
+BenchmarkRecallLarge/sqlite/1M-10        	       5	 235484300 ns/op	28675446 B/op	  798604 allocs/op
+BenchmarkRecallLarge/sqlite/1M-10        	       5	 235957133 ns/op	28671283 B/op	  798565 allocs/op
+BenchmarkRecallLarge/postgres/1M-10      	       1	2241203584 ns/op	42206752 B/op	  965280 allocs/op
+BenchmarkRecallLarge/postgres/1M-10      	       1	1935258834 ns/op	42200680 B/op	  965234 allocs/op
+BenchmarkRecallLarge/postgres/1M-10      	       1	1897323500 ns/op	42206648 B/op	  965290 allocs/op
+PASS

@@ -1,0 +1,60 @@
+$ $SCRATCH/ledger.test -test.run ^$ -test.bench . -test.benchmem -test.count=3 -test.timeout 60m
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/internal/ledger
+cpu: Apple M1 Max
+BenchmarkOpen/10k-10         	     165	   7163956 ns/op	       311.8 disk-B/memory	       192.9 heap-B/memory	 9948990 B/op	  100861 allocs/op
+BenchmarkOpen/10k-10         	     170	   7028309 ns/op	       311.8 disk-B/memory	       192.8 heap-B/memory	 9948958 B/op	  100861 allocs/op
+BenchmarkOpen/10k-10         	     165	   7240894 ns/op	       311.8 disk-B/memory	       192.9 heap-B/memory	 9948992 B/op	  100861 allocs/op
+BenchmarkOpen/100k-10        	      16	  74460208 ns/op	       313.8 disk-B/memory	       193.6 heap-B/memory	106690543 B/op	 1010972 allocs/op
+BenchmarkOpen/100k-10        	      16	  73055281 ns/op	       313.8 disk-B/memory	       193.6 heap-B/memory	106690520 B/op	 1010972 allocs/op
+BenchmarkOpen/100k-10        	      16	  74619534 ns/op	       313.8 disk-B/memory	       193.6 heap-B/memory	106690575 B/op	 1010973 allocs/op
+BenchmarkOpen/1M-10          	       2	 715178521 ns/op	       314.1 disk-B/memory	       205.4 heap-B/memory	1140168192 B/op	10114136 allocs/op
+BenchmarkOpen/1M-10          	       2	 706007729 ns/op	       314.1 disk-B/memory	       205.4 heap-B/memory	1140167584 B/op	10114133 allocs/op
+BenchmarkOpen/1M-10          	       2	 691553584 ns/op	       314.1 disk-B/memory	       205.4 heap-B/memory	1140167824 B/op	10114134 allocs/op
+BenchmarkGet/10k-10          	  867074	      1387 ns/op	     634 B/op	       4 allocs/op
+BenchmarkGet/10k-10          	  844442	      1353 ns/op	     634 B/op	       4 allocs/op
+BenchmarkGet/10k-10          	  895192	      1365 ns/op	     634 B/op	       4 allocs/op
+BenchmarkGet/100k-10         	  765985	      1579 ns/op	     639 B/op	       4 allocs/op
+BenchmarkGet/100k-10         	  724507	      1567 ns/op	     639 B/op	       4 allocs/op
+BenchmarkGet/100k-10         	  744922	      1589 ns/op	     639 B/op	       4 allocs/op
+BenchmarkGet/1M-10           	  714925	      1865 ns/op	     639 B/op	       4 allocs/op
+BenchmarkGet/1M-10           	  678684	      1753 ns/op	     639 B/op	       4 allocs/op
+BenchmarkGet/1M-10           	  689214	      1719 ns/op	     639 B/op	       4 allocs/op
+BenchmarkRemember/10k-10     	     261	   4601882 ns/op	    4851 B/op	      15 allocs/op
+BenchmarkRemember/10k-10     	     256	   4578322 ns/op	    1335 B/op	      15 allocs/op
+BenchmarkRemember/10k-10     	     265	   4761434 ns/op	    1365 B/op	      15 allocs/op
+BenchmarkRemember/100k-10    	     271	   4478943 ns/op	    1364 B/op	      15 allocs/op
+BenchmarkRemember/100k-10    	     271	   4448991 ns/op	    1364 B/op	      15 allocs/op
+BenchmarkRemember/100k-10    	     260	   4587651 ns/op	   35836 B/op	      15 allocs/op
+BenchmarkRemember/1M-10      	     272	   4627621 ns/op	    1364 B/op	      15 allocs/op
+BenchmarkRemember/1M-10      	     270	   4551046 ns/op	    1364 B/op	      15 allocs/op
+BenchmarkRemember/1M-10      	     267	   4645304 ns/op	    1365 B/op	      15 allocs/op
+BenchmarkRecall/10k-10       	     262	   4704318 ns/op	    2416 B/op	      19 allocs/op
+BenchmarkRecall/10k-10       	     262	   4730925 ns/op	    2823 B/op	      19 allocs/op
+BenchmarkRecall/10k-10       	     267	   4512596 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecall/100k-10      	     235	   4843280 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecall/100k-10      	     261	   4712022 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecall/100k-10      	     254	   4456238 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecall/1M-10        	     162	   9476834 ns/op	    1761 B/op	      19 allocs/op
+BenchmarkRecall/1M-10        	     217	   4893212 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecall/1M-10        	     249	   4679279 ns/op	    1760 B/op	      19 allocs/op
+BenchmarkRecallCascade/10k/removes-20-10         	  716918	      2104 ns/op	    3765 B/op	       9 allocs/op
+BenchmarkRecallCascade/10k/removes-20-10         	  767763	      1675 ns/op	    3572 B/op	       9 allocs/op
+BenchmarkRecallCascade/10k/removes-20-10         	  769327	      1677 ns/op	    3566 B/op	       9 allocs/op
+BenchmarkRecallCascade/10k/removes-10000-10      	   10000	    239562 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/10k/removes-10000-10      	    9459	    181635 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/10k/removes-10000-10      	    8588	    171179 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/100k/removes-20-10        	  761958	      1954 ns/op	    2485 B/op	       9 allocs/op
+BenchmarkRecallCascade/100k/removes-20-10        	  872366	      1755 ns/op	    2278 B/op	       9 allocs/op
+BenchmarkRecallCascade/100k/removes-20-10        	  834546	      1752 ns/op	    2343 B/op	       9 allocs/op
+BenchmarkRecallCascade/100k/removes-10000-10     	    9865	    161432 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/100k/removes-10000-10     	    9645	    147629 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/100k/removes-10000-10     	    9872	    165442 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/1M/removes-20-10          	  796821	      1495 ns/op	     848 B/op	       9 allocs/op
+BenchmarkRecallCascade/1M/removes-20-10          	  773934	      1378 ns/op	     848 B/op	       9 allocs/op
+BenchmarkRecallCascade/1M/removes-20-10          	  777690	      1346 ns/op	     848 B/op	       9 allocs/op
+BenchmarkRecallCascade/1M/removes-10000-10       	   10000	    171238 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/1M/removes-10000-10       	   10000	    165330 ns/op	  657856 B/op	      35 allocs/op
+BenchmarkRecallCascade/1M/removes-10000-10       	   10000	    169209 ns/op	  657856 B/op	      35 allocs/op
+PASS

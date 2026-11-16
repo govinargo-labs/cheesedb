@@ -1,0 +1,78 @@
+$ env CHEESEDB_BENCH_INDEX=1 $SCRATCH/ledger.test -test.run ^$ -test.bench Index -test.benchtime=3x -test.count=3 -test.benchmem -test.timeout 90m
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/internal/ledger
+cpu: Apple M1 Max
+BenchmarkIndex/1k/store-vectors-10         	       3	  59627750 ns/op	24908330 B/op	   15328 allocs/op
+BenchmarkIndex/1k/store-vectors-10         	       3	  59032708 ns/op	24905797 B/op	   15325 allocs/op
+BenchmarkIndex/1k/store-vectors-10         	       3	  60047681 ns/op	24905562 B/op	   15323 allocs/op
+BenchmarkIndex/1k/search-10                	       3	   1198556 ns/op	         1.375 heap-MB	      3256 index-B/memory	  286978 B/op	     154 allocs/op
+BenchmarkIndex/1k/search-10                	       3	   1123430 ns/op	         1.379 heap-MB	      3256 index-B/memory	  286978 B/op	     154 allocs/op
+BenchmarkIndex/1k/search-10                	       3	   1073694 ns/op	         1.380 heap-MB	      3256 index-B/memory	  286978 B/op	     154 allocs/op
+BenchmarkIndex/1k/open+search-10           	       3	   8947153 ns/op	 9864277 B/op	   19167 allocs/op
+BenchmarkIndex/1k/open+search-10           	       3	   8958361 ns/op	 9864410 B/op	   19169 allocs/op
+BenchmarkIndex/1k/open+search-10           	       3	   8966611 ns/op	 9864426 B/op	   19169 allocs/op
+BenchmarkIndex/1k/recall-erase-10          	       3	  15358292 ns/op	  743621 B/op	    3407 allocs/op
+BenchmarkIndex/1k/recall-erase-10          	       3	  15191889 ns/op	  743925 B/op	    3412 allocs/op
+BenchmarkIndex/1k/recall-erase-10          	       3	  27542847 ns/op	 3266458 B/op	    5449 allocs/op
+BenchmarkIndex/1k/open+recall-erase-10     	       3	  33503458 ns/op	12828045 B/op	   24502 allocs/op
+BenchmarkIndex/1k/open+recall-erase-10     	       3	  29083361 ns/op	11550210 B/op	   23482 allocs/op
+BenchmarkIndex/1k/open+recall-erase-10     	       3	  30789348 ns/op	11543578 B/op	   23494 allocs/op
+BenchmarkIndex/1k/open+recall-untrusted-10 	       3	   5919472 ns/op	 1014752 B/op	    9947 allocs/op
+BenchmarkIndex/1k/open+recall-untrusted-10 	       3	   4965139 ns/op	 1015584 B/op	    9959 allocs/op
+BenchmarkIndex/1k/open+recall-untrusted-10 	       3	   6487319 ns/op	 1016592 B/op	    9974 allocs/op
+BenchmarkIndex/10k/store-vectors-10        	       3	 422559097 ns/op	249341256 B/op	  151636 allocs/op
+BenchmarkIndex/10k/store-vectors-10        	       3	 419550375 ns/op	249340581 B/op	  151633 allocs/op
+BenchmarkIndex/10k/store-vectors-10        	       3	 422269778 ns/op	249342525 B/op	  151635 allocs/op
+BenchmarkIndex/10k/search-10               	       3	   1944542 ns/op	        10.71 heap-MB	      3256 index-B/memory	  473856 B/op	     251 allocs/op
+BenchmarkIndex/10k/search-10               	       3	   1936930 ns/op	        10.72 heap-MB	      3256 index-B/memory	  474106 B/op	     252 allocs/op
+BenchmarkIndex/10k/search-10               	       3	   1779125 ns/op	        10.73 heap-MB	      3256 index-B/memory	  472992 B/op	     250 allocs/op
+BenchmarkIndex/10k/open+search-10          	       3	  76943208 ns/op	96285413 B/op	  191319 allocs/op
+BenchmarkIndex/10k/open+search-10          	       3	  91080375 ns/op	96286048 B/op	  191319 allocs/op
+BenchmarkIndex/10k/open+search-10          	       3	  78695570 ns/op	96286085 B/op	  191319 allocs/op
+BenchmarkIndex/10k/recall-erase-10         	       3	  52818139 ns/op	28019688 B/op	   53500 allocs/op
+BenchmarkIndex/10k/recall-erase-10         	       3	  51099569 ns/op	27956904 B/op	   53496 allocs/op
+BenchmarkIndex/10k/recall-erase-10         	       3	  21036444 ns/op	 4694280 B/op	   33444 allocs/op
+BenchmarkIndex/10k/open+recall-erase-10    	       3	  96439944 ns/op	100417037 B/op	  224495 allocs/op
+BenchmarkIndex/10k/open+recall-erase-10    	       3	 125416861 ns/op	123685029 B/op	  244530 allocs/op
+BenchmarkIndex/10k/open+recall-erase-10    	       3	 111535486 ns/op	112006714 B/op	  234497 allocs/op
+BenchmarkIndex/10k/open+recall-untrusted-10         	       3	  96485222 ns/op	93302930 B/op	  203303 allocs/op
+BenchmarkIndex/10k/open+recall-untrusted-10         	       3	  12220070 ns/op	 9962565 B/op	  100948 allocs/op
+BenchmarkIndex/10k/open+recall-untrusted-10         	       3	  11743403 ns/op	10872944 B/op	  100962 allocs/op
+BenchmarkIndex/100k/store-vectors-10                	       3	4180758625 ns/op	2474655034 B/op	 1514411 allocs/op
+BenchmarkIndex/100k/store-vectors-10                	       3	4163970722 ns/op	2474655173 B/op	 1514412 allocs/op
+BenchmarkIndex/100k/store-vectors-10                	       3	4149375125 ns/op	2474655141 B/op	 1514412 allocs/op
+BenchmarkIndex/100k/search-10                       	       3	  17337681 ns/op	        98.89 heap-MB	      3257 index-B/memory	 1080154 B/op	     371 allocs/op
+BenchmarkIndex/100k/search-10                       	       3	  14288958 ns/op	        98.89 heap-MB	      3257 index-B/memory	 1082720 B/op	     376 allocs/op
+BenchmarkIndex/100k/search-10                       	       3	  14570681 ns/op	        98.90 heap-MB	      3257 index-B/memory	 1082080 B/op	     375 allocs/op
+BenchmarkIndex/100k/open+search-10                  	       3	 733634389 ns/op	947788234 B/op	 1911733 allocs/op
+BenchmarkIndex/100k/open+search-10                  	       3	 736451236 ns/op	947792309 B/op	 1911736 allocs/op
+BenchmarkIndex/100k/open+search-10                  	       3	 735158055 ns/op	947791680 B/op	 1911739 allocs/op
+BenchmarkIndex/100k/recall-erase-10                 	       3	 116069514 ns/op	94742445 B/op	  374659 allocs/op
+BenchmarkIndex/100k/recall-erase-10                 	       3	  53692653 ns/op	46398386 B/op	  333692 allocs/op
+BenchmarkIndex/100k/recall-erase-10                 	       3	  80102958 ns/op	70005554 B/op	  354117 allocs/op
+BenchmarkIndex/100k/open+recall-erase-10            	       3	 815689708 ns/op	1016778026 B/op	 2265480 allocs/op
+BenchmarkIndex/100k/open+recall-erase-10            	       3	 810581736 ns/op	1017860978 B/op	 2265613 allocs/op
+BenchmarkIndex/100k/open+recall-erase-10            	       3	 804167930 ns/op	1016715517 B/op	 2265466 allocs/op
+BenchmarkIndex/100k/open+recall-untrusted-10        	       3	 330728652 ns/op	425093456 B/op	 1442717 allocs/op
+BenchmarkIndex/100k/open+recall-untrusted-10        	       3	  76340069 ns/op	106809936 B/op	 1011071 allocs/op
+BenchmarkIndex/100k/open+recall-untrusted-10        	       3	 336516195 ns/op	425093957 B/op	 1442755 allocs/op
+BenchmarkIndex/1M/store-vectors-10                  	       3	41929369764 ns/op	25409889274 B/op	15141680 allocs/op
+BenchmarkIndex/1M/store-vectors-10                  	       3	41822730458 ns/op	25409888957 B/op	15141657 allocs/op
+BenchmarkIndex/1M/store-vectors-10                  	       3	41301842444 ns/op	25409888472 B/op	15141677 allocs/op
+BenchmarkIndex/1M/search-10                         	       3	 130957083 ns/op	      1118 heap-MB	      3257 index-B/memory	 5153664 B/op	     608 allocs/op
+BenchmarkIndex/1M/search-10                         	       3	 149682417 ns/op	      1118 heap-MB	      3257 index-B/memory	 5152858 B/op	     607 allocs/op
+BenchmarkIndex/1M/search-10                         	       3	 143357083 ns/op	      1118 heap-MB	      3257 index-B/memory	 5154618 B/op	     610 allocs/op
+BenchmarkIndex/1M/open+search-10                    	       3	7551997583 ns/op	10209270352 B/op	19116232 allocs/op
+BenchmarkIndex/1M/open+search-10                    	       3	7548004542 ns/op	10209269861 B/op	19116235 allocs/op
+BenchmarkIndex/1M/open+search-10                    	       3	7307569042 ns/op	10209272240 B/op	19116236 allocs/op
+BenchmarkIndex/1M/recall-erase-10                   	       3	 160147806 ns/op	141595946 B/op	  717354 allocs/op
+BenchmarkIndex/1M/recall-erase-10                   	       3	 164020292 ns/op	149156376 B/op	  736017 allocs/op
+BenchmarkIndex/1M/recall-erase-10                   	       3	 198296347 ns/op	172767581 B/op	  756431 allocs/op
+BenchmarkIndex/1M/open+recall-erase-10              	       3	7492923583 ns/op	10394050144 B/op	19873833 allocs/op
+BenchmarkIndex/1M/open+recall-erase-10              	       3	7660571764 ns/op	10354355506 B/op	19851660 allocs/op
+BenchmarkIndex/1M/open+recall-erase-10              	       3	7376069028 ns/op	10401535242 B/op	19892496 allocs/op
+BenchmarkIndex/1M/open+recall-untrusted-10          	       3	3010685555 ns/op	4217322122 B/op	13372483 allocs/op
+BenchmarkIndex/1M/open+recall-untrusted-10          	       3	 696856903 ns/op	1141287245 B/op	10114235 allocs/op
+BenchmarkIndex/1M/open+recall-untrusted-10          	       3	 713136917 ns/op	1141288344 B/op	10114249 allocs/op
+PASS

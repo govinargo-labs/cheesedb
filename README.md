@@ -38,21 +38,21 @@ Deleting that source is not enough. Everything the agent *learned* from it stays
 
 You can model sources and memories in SQL, or as a graph in Neo4j. We did both, to compare: the same data on all four engines, with the same durability (every write flushed to the physical disk before it is acknowledged).
 
-**Benchmarks** with 1M memories per agent, median of 3 runs, on an Apple M1 Max (macOS, internal SSD), SQLite 3.53, PostgreSQL 17 and Neo4j Community 2026.10. Full results, method and caveats: [BENCHMARKS.md](BENCHMARKS.md).
+**Benchmarks** with 1M memories per agent, median of 3 runs, on an Apple M1 Max (macOS, internal SSD), SQLite 3.53, PostgreSQL 17 and Neo4j Community 2026.10. Full results, method and caveats: [BENCHMARKS.md](BENCHMARKS.md); the raw output of the run: [bench/results/v0.3.0](bench/results/v0.3.0/).
 
 | | cheesedb | SQLite | PostgreSQL | Neo4j |
 |---|---|---|---|---|
-| Recall that removes 10,000 memories | **5.5 ms** | 235 ms | 1.82 s | 67 ms |
-| Recall that removes 20 memories | **4.8 ms** | 7.1 ms | 10.5 ms | 6.8 ms |
-| Read one memory by id | **1.6 µs** | 7.0 µs | 44 µs | 179 µs |
-| Durable write (one memory) | **4.7 ms** | 5.3 ms | 6.6 ms | 6.3 ms |
-| Startup, ready for the first query | 667 ms | **0.1 ms** | 2.7 ms | 1.0 ms¹ |
+| Recall that removes 10,000 memories | **5.2 ms** | 236 ms | 1.94 s | 68 ms |
+| Recall that removes 20 memories | **4.9 ms** | 7.2 ms | 10.1 ms | 6.5 ms |
+| Read one memory by id | **1.8 µs** | 7.4 µs | 59 µs | 211 µs |
+| Durable write (one memory) | **4.6 ms** | 5.5 ms | 6.8 ms | 6.1 ms |
+| Startup, ready for the first query | 706 ms | **0.1 ms** | 3.0 ms | 1.2 ms¹ |
 | Disk per memory | 314 B | **249 B** | 546 B | 496 B |
 | RAM per memory while open | 205 B | page cache only | shared buffers only | JVM heap and page cache |
 
-¹ A new connection to a server that is already running; booting the Neo4j server took 6.5 to 8.2 s. PostgreSQL and Neo4j ran over TCP on localhost, which adds a round trip to each statement. We wrote the Neo4j model and queries ourselves, and an expert may do better.
+¹ A new connection to a server that is already running; booting the Neo4j server took 6.5 to 8.2 s in an earlier run. PostgreSQL and Neo4j ran over TCP on localhost, which adds a round trip to each statement. We wrote the Neo4j model and queries ourselves, and an expert may do better.
 
-- **Recall is where it wins.** cheesedb keeps the dependency graph in memory and removes 10,000 memories with one write: about 12x faster than Neo4j, 43x faster than SQLite and 330x faster than PostgreSQL. The SQL versions run several statements for each affected memory. A graph database fits the job better, and Neo4j is the closest competitor, but it is still slower.
+- **Recall is where it wins.** cheesedb keeps the dependency graph in memory and removes 10,000 memories with one write: about 13x faster than Neo4j, 45x faster than SQLite and 370x faster than PostgreSQL. The SQL versions run several statements for each affected memory. A graph database fits the job better, and Neo4j is the closest competitor, but it is still slower.
 - **The rules live in the engine, not in your code.** No memory without a source, no memory built on a recalled source, recalls are permanent, agents cannot see each other. With SQL or a graph database you write and test these yourself.
 - **Erasure is built in.** In a general database, a deleted row's bytes can stay in the files (free pages, the write-ahead log) until a vacuum or checkpoint. cheesedb's `Erase` rewrites the file without them before it returns.
 - **Writes are about even,** because the disk flush dominates for every engine.
@@ -199,9 +199,9 @@ cheesedb's own cost with a search index (768 values per memory), on an Apple M1 
 |---|---|---|---|---|
 | Disk: memories / search index | 0.3 MB / 3.1 MB | 3 MB / 31 MB | 30 MB / 311 MB | 300 MB / 3.1 GB |
 | RAM with the index loaded | 1.4 MB | 11 MB | 99 MB | 1.1 GB |
-| Search, store kept open (Go) | 1.1 ms | 2.2 ms | 18 ms | 142 ms |
-| Search per `cheesedb` command or MCP call | 9.7 ms | 82 ms | 0.76 s | 7.5 s |
-| Recall with Erase per command or MCP call | 30 ms | 120 ms | 0.85 s | 7.6 s |
+| Search, store kept open (Go) | 1.1 ms | 1.9 ms | 15 ms | 143 ms |
+| Search per `cheesedb` command or MCP call | 9.0 ms | 79 ms | 0.74 s | 7.5 s |
+| Recall with Erase per command or MCP call | 31 ms | 112 ms | 0.81 s | 7.5 s |
 
 The command and the MCP server open the store for every call, so each search reloads the index; they suit agents of up to about 100,000 memories. A Go program that keeps the store open loads it once. With real embeddings at 1M, search still ranked the right memories first among a million look-alikes, and none came back after their source was recalled.
 
@@ -276,7 +276,7 @@ The agent is fixed by the command line, and no tool takes an agent, so the model
 Things to know before you rely on it:
 - **The model declares the sources and legs itself.** A recall is only as complete as the legs it wrote, and a prompt-injected model can declare them wrongly or recall things it should not (see [Limits](#limits)).
 - **A model that can also run shell commands as you can skip the tools** and read every agent's files directly. Isolation holds only when the tools are the model's only way to the data. For real separation, the data would have to belong to another OS user, which is what the planned memory server is for.
-- **Each tool call opens the store and closes it again**, so a second app window or the `cheesedb` command can use it in between. The cost is the replay time under [Limits](#limits): small for a young agent, about 0.7 s per call at 1M memories. A `search` also reloads the index: 10 ms at 1,000 memories, 0.76 s at 100,000, 7.5 s at 1M ([How it scales](#how-it-scales)).
+- **Each tool call opens the store and closes it again**, so a second app window or the `cheesedb` command can use it in between. The cost is the replay time under [Limits](#limits): small for a young agent, about 0.7 s per call at 1M memories. A `search` also reloads the index: 9 ms at 1,000 memories, 0.74 s at 100,000, 7.5 s at 1M ([How it scales](#how-it-scales)).
 - Data lives in `~/.cheesedb`, or in `CHEESEDB_DIR` if the app starts the command with that variable set, as for every `cheesedb` command.
 
 ## Concepts

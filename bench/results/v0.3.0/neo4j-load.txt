@@ -1,0 +1,7 @@
+$ env CHEESEDB_NEO4J=bolt://127.0.0.1:7699 $SCRATCH/bench.test -test.run ^$ -test.bench Neo4jGet/neo4j/1M -test.benchtime=1x -test.count=1
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/bench
+cpu: Apple M1 Max
+BenchmarkNeo4jGet/neo4j/1M-10         	       1	  67516542 ns/op	    9440 B/op	     173 allocs/op
+PASS
