@@ -14,7 +14,7 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 - **`examples/plain-english`:** the peanut story step by step from the command line (search, ask, recall, erase, find, verify), for a demo or a screen recording.
 - **Search indexes take a quarter of the RAM:** vectors are held at one byte per value (int8), and the few rows that could make the top results are re-checked with the exact float32 values on disk, so results are unchanged. At 1M memories: 1.1 GB instead of 3.6 GB.
 - **Measured from 1,000 to 1M memories** ([BENCHMARKS.md](BENCHMARKS.md#search-index-cheesedbs-own-cost-by-size)): search takes 1.1 ms at 1,000 memories and 142 ms at 1M from Go with the store open; the command and MCP server reload the index for every call (10 ms at 1,000, 7.5 s at 1M).
-- **Website:** split into pages (home with a step-by-step recall game, MCP, numbers, limits) with shared style and script files; the architecture picture is drawn from `docs/diagram/architecture.html` and now shows search.
+- **Website:** [cheesedb.dev](https://cheesedb.dev) now has a step-by-step recall game and pages for MCP, numbers and limits. Its files no longer live in this repository. The architecture picture is drawn from `docs/diagram/architecture.html` and now shows search.
 - **A golden store written by v0.2.0** is kept in `testdata/`: every later version must open it with the same head fingerprint and answers, and write the same records.
 - **Closing an agent no longer holds the store's lock** while the agent finishes a write in progress, so other agents can be opened and closed meanwhile.
 
