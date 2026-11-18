@@ -376,6 +376,12 @@ Planned work, roughly in order. Plans can change, and nothing here is a promise 
 - **A memory-mapped vector file,** so the command and the MCP server search without reloading the whole index on every call.
 - **Session summaries** for MCP apps that cannot hand cheesedb whole conversations.
 
+## How this was built
+
+I built cheesedb with Claude (Anthropic) through Claude Code. Claude wrote much of the code, tests and documentation; I set the design, reviewed every change, ran the benchmarks and decided what was released. Earlier commits, including every release through v0.3.0, do not mark this individually, because I had not started adding a trailer yet; this statement covers them. From now on, commits Claude contributes to carry a `Co-Authored-By: Claude` trailer.
+
+The claims are checkable: `go test ./...` runs the full suite, and `bench/run-all.sh` reproduces every number in [BENCHMARKS.md](BENCHMARKS.md).
+
 ## About the name
 
 "Lot" and "recall" are food-safety words. A cheese maker records which milk lots went into which wheels, so when one lot turns out to be contaminated, they recall exactly the cheese made from it. cheesedb does the same for what an agent remembers.
