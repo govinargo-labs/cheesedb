@@ -225,6 +225,8 @@ model    = your-model-name
 # api_key = your-key        (only if your server needs one)
 ```
 
+If the file holds a key (`api_key` or `embed_api_key`), the commands stop while other users can read it, as `ssh` does for a private key, and print the line that fixes it: `chmod 600 ~/.cheesedb/llm.conf`. A file with no key can stay readable.
+
 The demo tells one story three ways. An agent learns from a user message, a web page and a weather tool. Then the weather tool turns out to be wrong. Here is a real run:
 
 <p align="center"><img src="docs/demo.png" alt="Output of cheesedb demo: an agent learns from three sources, the weather tool is removed three ways, and a table compares whether the model still uses the bad data and whether the bad text is still in the files" width="760"></p>
