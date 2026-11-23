@@ -64,6 +64,12 @@ cheesedb/             module github.com/govinargo-labs/cheesedb
                       opening the store, so a slow model never holds the lock. With a
                       model, remember also embeds into the index "default". No tool takes
                       an agent. Knows nothing about MCP.
+  internal/server/    HTTP + JSON over one open store (preview): one request = one Agent
+                      method; the Authorization token picks the agent, and no route or
+                      body field names one. Error codes, body and request limits,
+                      browser checks (Origin, Host). warm.go keeps recently used agents
+                      open between requests (in RAM; idle and least-recently-used ones
+                      close). Never calls a model: vectors arrive in the request.
   internal/benchgen/  the shared benchmark workload
   bench/              separate module: SQLite, PostgreSQL and Neo4j comparison
   examples/vector-search/  a runnable demo of vector search and recall
@@ -78,6 +84,14 @@ cheesedb/             module github.com/govinargo-labs/cheesedb
                       `search`, `ask` (search, then the chat model answers from those
                       memories only), `forget` (search, preview with WouldRecall,
                       erase after a yes), `embed` (rebuild the index) and `index`.
+                      `cheesedb serve` (serve.go) runs internal/server on 127.0.0.1
+                      (another address only with TLS) and/or a Unix socket, holds the
+                      store's LOCK while it runs, and on Ctrl-C lets running requests
+                      finish before closing the store. tlsauto.go makes the self-signed
+                      certificate of `serve --tls-auto` (for containers).
+  Dockerfile          the server image: a static build on distroless, non-root, TLS
+                      only, everything in /data. The Kubernetes chart lives in its
+                      own repository (cheesedb-helm).
 ```
 
 Encoding is kept separate from file I/O so every byte of the format can be tested without touching the disk. `internal/` prevents other modules importing the building blocks directly.
@@ -356,7 +370,7 @@ Ledger ready (Report says what was replayed or cut)
   - Locks on network file systems (NFS, SMB) may not work; use a local disk.
 - **`cheesedb.Open`** then reads every `agent.key` into an in-memory map from token hash to folder. A missing or damaged key is `ErrCorrupt` for the whole store, rather than silently hiding that agent.
 - **One ledger per agent:** the store keeps a list of open agents, guarded by one in-memory lock that is held only to create, open, close or delete an agent. Opening an agent twice gives two handles on one ledger, so there is never a second writer. An agent's reads and writes never take the store's lock. Closing an agent's last handle waits for its write in progress (an Embed or a Compact can take a while), so it runs without the store's lock: meanwhile the agent is listed as closing, `OpenAgent` for it waits, and `DeleteAgent` refuses.
-  - The first open of an agent replays its log while holding that lock, so other agents' opens wait during it (their reads and writes do not).
+  - The first open of an agent replays its log WITHOUT that lock, which matters when one agent takes seconds to replay. The agent is listed in a third in-memory map, `opening`, for as long as the replay runs (nothing on disk; the entry is gone when the replay ends or the process exits). Opens of other agents never look at it. A second open of the same agent finds it there, waits, and shares the same ledger, or the replay's error, so a log is never replayed twice and never gets a second writer. `DeleteAgent` refuses an agent that is opening, and `Store.Close` waits for each replay in progress, which then closes its own ledger.
 - Inside it, the agent's log is split into numbered **segment** files: `000001.seg`, `000002.seg`, ... Together they form ONE log: ids and the hash chain run on from one segment into the next.
 - Exactly one segment is **active**: the highest-numbered one. New records are only ever appended to its end ("append + fsync" in the picture).
 - When the next batch would not fit in the active segment, the segment is **sealed**: nothing is ever appended to it again. The next segment is created, and the directory is fsynced so the new file survives a crash. A batch never spans two segments.

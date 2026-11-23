@@ -140,6 +140,9 @@ For AI apps (MCP)
   cheesedb mcp <agent>                        serve the agent's memory as tools; the app
                                               starts it, e.g.
                                               claude mcp add cheesedb -- cheesedb mcp alice
+
+As a server (HTTP + JSON, for any language; details: cheesedb serve --help)
+  cheesedb serve                              serve <home>/data on 127.0.0.1:7700
 `
 
 func main() {
@@ -192,6 +195,8 @@ func run(args []string) error {
 		return nil
 	case "demo":
 		return demo()
+	case "serve":
+		return serveCommand(args)
 	case "mcp":
 		if len(args) < 1 {
 			return errors.New("use: cheesedb mcp <agent>  (started by an MCP app, not by hand)")
@@ -298,7 +303,7 @@ func create(dir, name string) error {
 	if err := makeHome(); err != nil {
 		return err
 	}
-	s, err := cheesedb.Open(dir)
+	s, err := openStore(dir)
 	if err != nil {
 		return err
 	}
@@ -317,6 +322,16 @@ func create(dir, name string) error {
 	return nil
 }
 
+// openStore is cheesedb.Open with a hint when the store is locked: the
+// likely reason is a cheesedb serve holding it.
+func openStore(dir string) (*cheesedb.Store, error) {
+	s, err := cheesedb.Open(dir)
+	if errors.Is(err, cheesedb.ErrLocked) {
+		return nil, fmt.Errorf("%w\n(is cheesedb serve running on this store? stop it, or send requests to it over HTTP)", err)
+	}
+	return s, err
+}
+
 func openAgent(dir, name string) (*cheesedb.Store, *cheesedb.Agent, error) {
 	b, err := os.ReadFile(tokenPath(name))
 	if err != nil {
@@ -326,7 +341,7 @@ func openAgent(dir, name string) (*cheesedb.Store, *cheesedb.Agent, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := cheesedb.Open(dir)
+	s, err := openStore(dir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -347,7 +362,7 @@ func deleteAgent(name string) error {
 	if err != nil {
 		return err
 	}
-	s, err := cheesedb.Open(dataDir)
+	s, err := openStore(dataDir)
 	if err != nil {
 		return err
 	}
