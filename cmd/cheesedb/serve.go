@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -334,15 +336,56 @@ func listenUnix(path string) (net.Listener, error) {
 			return nil, err
 		}
 	}
-	ln, err := net.Listen("unix", path)
+	if runtime.GOOS == "windows" {
+		// File modes do not guard sockets on Windows.
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			ln.Close()
+			return nil, err
+		}
+		return ln, nil
+	}
+
+	// Made at path directly, the socket would have the default mode until
+	// Chmod, and another user could connect in that moment. So make it in a
+	// new folder only this user can enter (0700), set 0600, then link it
+	// into place: at path it is 0600 from the start.
+	tmp, err := os.MkdirTemp(filepath.Dir(path), ".sock")
 	if err != nil {
 		return nil, err
 	}
-	// Put the socket in a folder only you can enter for full protection:
-	// between Listen and Chmod it briefly has the default mode.
-	if err := os.Chmod(path, 0o600); err != nil {
+	defer os.RemoveAll(tmp) // removes only the temp name; path stays
+	tmpSock := filepath.Join(tmp, "s")
+	ln, err := net.Listen("unix", tmpSock)
+	if err != nil {
+		return nil, err
+	}
+	// Go would remove tmpSock on Close; unixListener removes path instead.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := os.Chmod(tmpSock, 0o600); err != nil {
 		ln.Close()
 		return nil, err
 	}
-	return ln, nil
+	// Link, unlike Rename, fails if another server made path meanwhile.
+	if err := os.Link(tmpSock, path); err != nil {
+		ln.Close()
+		return nil, fmt.Errorf("--unix %s: %w", path, err)
+	}
+	return &unixListener{Listener: ln, path: path}, nil
+}
+
+// unixListener removes its socket file on Close.
+type unixListener struct {
+	net.Listener
+	path string
+	once sync.Once
+}
+
+func (l *unixListener) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { os.Remove(l.path) })
+	return err
 }

@@ -230,6 +230,10 @@ func TestServeUnix(t *testing.T) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode %v, want 0600", fi.Mode().Perm())
 	}
+	// The temp folder the socket was made in is gone.
+	if ents, _ := os.ReadDir(filepath.Dir(sock)); len(ents) != 1 {
+		t.Fatalf("socket folder holds %d entries, want only the socket", len(ents))
+	}
 	c := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
