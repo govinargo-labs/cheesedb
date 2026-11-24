@@ -4,6 +4,7 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 
 ## v0.4.0 (preview)
 
+- **A `llm.conf` that holds a key must be private.** When the file holds `api_key` or `embed_api_key` and other users can read it, the LLM and search commands refuse to run and print the `chmod 600` line that fixes it, as `ssh` does for a private key. The mode check is Unix-only; on Windows the permission bits do not say who can read a file. A file with no key can stay readable.
 - **The raw benchmark output is kept in the repository** ([`bench/results/v0.3.0/`](bench/results/v0.3.0/)): every benchmark command's unedited output, with the commit, machine, versions and test program checksums. BENCHMARKS.md, the README and the website now come from that run. Most numbers moved by a few percent; the largest change is PostgreSQL's read by id (44 to 59 µs). cheesedb's in-memory recall walk measured slower than in the earlier run (169 µs instead of 109 µs for 10,000 memories), which BENCHMARKS.md says.
 - **`bench/run-all.sh`** repeats the whole benchmark run with one command.
 - **Every release gets its test results:** when a release is published, the full test suite runs on Linux, macOS and Windows and each output is attached to the release.

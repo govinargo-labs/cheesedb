@@ -87,12 +87,23 @@ func newLLM() (*llm, error) {
 }
 
 // readConf reads "name = value" lines. A missing file is not an error: the
-// environment may hold everything.
+// environment may hold everything. A file that holds a key must be private.
 func readConf(path string) (map[string]string, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]string{}, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	// The mode comes from this open file, not from a second stat of the path:
+	// what is checked is the file that was read.
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +120,22 @@ func readConf(path string) (map[string]string, error) {
 		}
 		conf[name] = strings.TrimSpace(value)
 	}
+	if err := confModeError(path, info.Mode(), conf); err != nil {
+		return nil, err
+	}
 	return conf, nil
+}
+
+// confKeyNames lists the key settings the file itself holds, in the order they
+// are documented. A key in the environment is not the file's business.
+func confKeyNames(conf map[string]string) []string {
+	var names []string
+	for _, name := range []string{"api_key", "embed_api_key"} {
+		if conf[name] != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 var thinkTags = regexp.MustCompile(`(?s)<think>.*?</think>`)
