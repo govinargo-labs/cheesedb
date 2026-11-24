@@ -87,6 +87,13 @@ var (
 	ErrBadVector   = ledger.ErrBadVector
 	ErrRecalled    = ledger.ErrRecalled
 
+	// ErrBroken means a write to this agent's log failed (a full disk, an
+	// I/O error). The agent refuses further writes until it is opened
+	// again: retrying an fsync that failed cannot be trusted.
+	ErrBroken = logfile.ErrBroken
+	// ErrTooLarge means a lot or memory is over the 1 MiB record limit.
+	ErrTooLarge = record.ErrTooLarge
+
 	ErrBadName     = errors.New("cheesedb: agent name must be 1-127 bytes")
 	ErrAgentExists = errors.New("cheesedb: an agent with this name already exists")
 	ErrBadToken    = errors.New("cheesedb: no agent has this token")
@@ -129,12 +136,16 @@ type Store struct {
 
 	// mu guards the maps: which agents exist, and which are open. It is
 	// held to create, open, close or delete an agent, never during an
-	// agent's reads and writes, so agents never wait for each other's work.
+	// agent's reads and writes or its replay, so agents never wait for
+	// each other's work.
 	mu      sync.Mutex
 	agents  map[[32]byte]string  // token key -> agent folder name
+	opening map[[32]byte]*shared // agents whose log is being replayed (see OpenAgent)
 	open    map[[32]byte]*shared // agents open right now
 	closing map[[32]byte]*shared // agents whose ledger is closing (see Agent.Close)
 	closed  bool
+
+	closeDone chan struct{} // closed when the first Close has finished
 
 	// shut mirrors closed for handles, which check it on every call
 	// without taking mu (that would make agents wait for each other).
@@ -148,6 +159,8 @@ type shared struct {
 	led     *ledger.Ledger
 	report  Report
 	handles int
+	ready   chan struct{} // closed once the replay has finished, well or not
+	err     error         // the replay's error, set before ready is closed
 	done    chan struct{} // closed once led is closed
 }
 
@@ -160,6 +173,14 @@ const (
 )
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+// openLedger replays an agent's log. A variable so tests can play a slow
+// replay.
+var openLedger = ledger.Open
+
+// replayWait is called when an OpenAgent starts waiting for another call's
+// replay of the same agent. Tests replace it to know a waiter is there.
+var replayWait = func() {}
 
 // Open opens (or creates) the store in dir. dir's parent must exist.
 // The folder is created readable only by this OS user (0700).
@@ -184,7 +205,7 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, lock: lock, agents: map[[32]byte]string{}, open: map[[32]byte]*shared{}, closing: map[[32]byte]*shared{}}
+	s := &Store{dir: dir, lock: lock, agents: map[[32]byte]string{}, opening: map[[32]byte]*shared{}, open: map[[32]byte]*shared{}, closing: map[[32]byte]*shared{}, closeDone: make(chan struct{})}
 	if err := s.load(); err != nil {
 		lock.Close()
 		return nil, err
@@ -293,40 +314,80 @@ func (s *Store) CreateAgent(name string) (Token, error) {
 }
 
 // OpenAgent returns a handle on the agent this token belongs to. Opening the
-// same agent again returns another handle on the same open ledger. The
-// first open replays the agent's log, holding the store's lock meanwhile:
-// other agents' opens wait, their reads and writes do not.
+// same agent again returns another handle on the same open ledger.
+//
+// The first open replays the agent's log, which can take seconds for a
+// large agent. It does so without the store's lock, so other agents open,
+// close and work as usual meanwhile; only opens of the same agent wait for
+// it, and then share its ledger (or its error).
 func (s *Store) OpenAgent(tok Token) (*Agent, error) {
 	key := keyOf(tok)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	// If its last handle is closing right now, wait: a second ledger on
-	// the same files would be a second writer.
-	for c := s.closing[key]; c != nil; c = s.closing[key] {
-		s.mu.Unlock()
-		<-c.done
-		s.mu.Lock()
-		if s.closing[key] == c {
-			delete(s.closing, key)
+	for {
+		// Its last handle is closing right now: wait, since a second
+		// ledger on the same files would be a second writer.
+		if c := s.closing[key]; c != nil {
+			s.mu.Unlock()
+			<-c.done
+			s.mu.Lock()
+			if s.closing[key] == c {
+				delete(s.closing, key)
+			}
+			continue
 		}
+		// Another call is replaying it: wait and share the outcome.
+		if o := s.opening[key]; o != nil {
+			s.mu.Unlock()
+			replayWait()
+			<-o.ready
+			if o.err != nil {
+				return nil, o.err
+			}
+			s.mu.Lock()
+			continue // it is in open now, or already closing again
+		}
+		break
 	}
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrClosed
 	}
 	folder, ok := s.agents[key]
 	if !ok {
+		s.mu.Unlock()
 		return nil, ErrBadToken
 	}
-	sh := s.open[key]
-	if sh == nil {
-		led, rep, err := ledger.Open(filepath.Join(s.dir, folder), logfile.Options{})
-		if err != nil {
-			return nil, err
-		}
-		sh = &shared{led: led, report: rep, done: make(chan struct{})}
-		s.open[key] = sh
+	if sh := s.open[key]; sh != nil {
+		sh.handles++
+		s.mu.Unlock()
+		return &Agent{s: s, key: key, sh: sh}, nil
 	}
-	sh.handles++
+
+	// First open: list it as opening, then replay without the lock.
+	sh := &shared{ready: make(chan struct{}), done: make(chan struct{})}
+	s.opening[key] = sh
+	s.mu.Unlock()
+	led, rep, err := openLedger(filepath.Join(s.dir, folder), logfile.Options{})
+
+	s.mu.Lock()
+	delete(s.opening, key)
+	if err == nil && s.closed {
+		// The store closed during the replay and waits for this ledger to
+		// close before it releases the folder (see Close).
+		s.mu.Unlock()
+		err = errors.Join(ErrClosed, led.Close())
+	} else if err == nil {
+		sh.led, sh.report, sh.handles = led, rep, 1
+		s.open[key] = sh
+		s.mu.Unlock()
+	} else {
+		s.mu.Unlock()
+	}
+	sh.err = err
+	close(sh.ready) // after err is set: waiters read it once ready is closed
+	if err != nil {
+		return nil, err
+	}
 	return &Agent{s: s, key: key, sh: sh}, nil
 }
 
@@ -346,7 +407,7 @@ func (s *Store) DeleteAgent(tok Token) error {
 	if !ok {
 		return ErrBadToken
 	}
-	if s.open[key] != nil || s.closing[key] != nil {
+	if s.opening[key] != nil || s.open[key] != nil || s.closing[key] != nil {
 		return ErrAgentInUse
 	}
 	// Rename first, so the agent disappears in one atomic step; a crash
@@ -370,12 +431,30 @@ func (s *Store) DeleteAgent(tok Token) error {
 // Open. Handles still held fail with ErrClosed.
 func (s *Store) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		// Another Close is running or done. It lets go of mu while it
+		// waits for replays, so wait for it to finish: returning sooner
+		// would let the caller reopen the folder while files are open.
+		s.mu.Unlock()
+		<-s.closeDone
 		return nil
 	}
+	defer s.mu.Unlock()
+	defer close(s.closeDone) // runs first: after the folder is released
 	s.closed = true
 	s.shut.Store(true)
+	// Agents being replayed right now: wait for each, without mu, which
+	// its replay needs to finish. It sees closed and closes its own
+	// ledger, so no file stays open once the folder is released.
+	for len(s.opening) > 0 {
+		var o *shared
+		for _, o = range s.opening {
+			break
+		}
+		s.mu.Unlock()
+		<-o.ready
+		s.mu.Lock()
+	}
 	var errs []error
 	for key, sh := range s.open {
 		errs = append(errs, sh.led.Close())

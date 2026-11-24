@@ -1,0 +1,84 @@
+name: image
+
+# Builds the server image for linux/amd64 and linux/arm64 (arm64 under
+# QEMU emulation, so it takes a few minutes) and pushes it to
+#   ghcr.io/govinargo-labs/cheesedb:<version>
+# when a release is published (tag v0.4.0 gives image tag 0.4.0), or by
+# hand from the Actions tab for an existing release tag.
+#
+# Nothing to set up: the workflow's own GITHUB_TOKEN signs in to ghcr.io.
+# Actions are pinned to full commit SHAs (the tag is in the comment).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build (for example v0.4.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: image
+      cancel-in-progress: false   # never stop a push halfway
+    steps:
+      # The tag comes from the release or the form; accept only vX.Y.Z or
+      # vX.Y.Z-suffix, so nothing else can reach the build or the image name.
+      - name: Read the version
+        id: v
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "not a release tag: $TAG" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.v.outputs.tag }}
+          persist-credentials: false
+
+      # The arm64 image is built under emulation: the Dockerfile stays a
+      # plain one that also works with the legacy (non-BuildKit) builder.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Sign in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/govinargo-labs/cheesedb:${{ steps.v.outputs.version }}
+          build-args: VERSION=${{ steps.v.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/govinargo-labs/cheesedb
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: true
