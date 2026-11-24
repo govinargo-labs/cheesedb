@@ -9,7 +9,7 @@ cheesedb is in preview (before v1.0). Only the latest release gets security fixe
 | Latest release  | :white_check_mark: |
 | Older releases  | :x:                |
 
-`cheesedb serve` is a preview and should not be used yet. You can still report problems in it.
+`cheesedb serve` is a preview: do not use it for real data yet. You can still report problems in it.
 
 ## Reporting a Vulnerability
 
@@ -26,9 +26,9 @@ Report it privately on GitHub instead:
 
 ### What happens next
 
-- We reply within **few days** to confirm we got your report.
+- We reply within **a few days** to confirm we got your report.
 - We tell you if we accept it or not, and why.
-- If we accept it, we work on a fix and keep you updated. We aim (try our best) to release a fix within **90 days**.
+- If we accept it, we work on a fix and keep you updated. We aim to release a fix within **90 days**.
 - When the fix is out, we publish a security advisory. We credit you by name, unless you ask us not to.
 
 ## Scope
