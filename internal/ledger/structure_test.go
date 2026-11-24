@@ -3,9 +3,11 @@ package ledger
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // uv builds raw structural bytes from numbers, so tests can write things
@@ -57,6 +59,45 @@ func TestCanonicalLegs(t *testing.T) {
 		if _, err := canonicalLegs(legs); !errors.Is(err, ErrBadLegs) {
 			t.Errorf("%s: got %v, want ErrBadLegs", name, err)
 		}
+	}
+}
+
+// TestManyLegsAreQuick: finding identical legs must not compare every leg
+// with every other one. 200,000 legs used to take about 15 s to write and
+// as long again to replay; any token holder could send that in one request.
+// The time limit is far above what the one-pass check needs, even under
+// -race, and far below what the old check took.
+func TestManyLegsAreQuick(t *testing.T) {
+	const n = 200_000
+	const first = 1000 // the one-parent legs start here, above the ids below
+	legs := make([]Leg, n)
+	for i := range legs {
+		legs[i] = Leg{ID(first + i)}
+	}
+	// Legs that are not equal but whose parents run together must not be
+	// mistaken for each other: [1 2] is not [1] and [2], and 300 is two bytes.
+	legs[0], legs[1], legs[2], legs[3], legs[4] = Leg{1, 2}, Leg{1}, Leg{2}, Leg{1, 300}, Leg{300}
+
+	start := time.Now()
+	canon, err := canonicalLegs(legs)
+	if err != nil {
+		t.Fatalf("canonicalLegs: %v", err)
+	}
+	got, err := decodeMemory(encodeMemory(canon), first+n)
+	if err != nil {
+		t.Fatalf("decodeMemory: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("%d legs took %v to check, encode and decode", n, took)
+	}
+	if !reflect.DeepEqual(got, canon) {
+		t.Fatal("decoded legs differ from the encoded ones")
+	}
+
+	// A copy of the very first leg, at the very end, is still caught.
+	legs = append(legs, Leg{2, 1})
+	if _, err := canonicalLegs(legs); !errors.Is(err, ErrBadLegs) || !strings.Contains(err.Error(), fmt.Sprintf("legs 0 and %d", n)) {
+		t.Errorf("identical first and last leg: got %v, want ErrBadLegs naming legs 0 and %d", err, n)
 	}
 }
 

@@ -2,6 +2,15 @@
 
 cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the API and the on-disk format may change between minor versions.
 
+## Unreleased
+
+- **Security: built with Go 1.26.11.** Go 1.26.5 had known bugs in its HTTP server that let a client with no token crash `cheesedb serve` or use up its memory. cheesedb now needs Go 1.26.11 or newer (`go.mod`), and the Docker image is built with it. Everyone running `cheesedb serve` should update.
+- **Security: a memory with very many legs is checked quickly.** Finding identical legs compared every leg with every other one, so one request with 200,000 legs held a CPU for about 15 seconds, and opening the store paid that again. The check now takes one pass.
+- **Security: one agent cannot take every request slot.** A token holder could hold all 256 slots by sending request bodies slowly. Each agent may now run at most 32 requests at once (`MaxPerAgent`, by default an eighth of `MaxRequests`); beyond that it gets `429 agent_busy` with `Retry-After`, and other agents still get through.
+- **Security: the `--tls-auto` certificate is limited to its own names.** It is its own certificate authority, so `tls.key` could have signed a certificate for any website, and a machine that trusts `tls.crt` would have believed it. It now carries name constraints (only localhost, 127.0.0.1, ::1 and the `--tls-host` names) and may sign no further authorities. A certificate made by an earlier version keeps working but is not limited: delete `tls.crt` and `tls.key` to make a new one.
+- **Security: CI and image hardening.** Every GitHub Action is pinned to a commit, the release-results workflow accepts only `vX.Y.Z` tags and no longer pastes step output into a shell line, and the Docker base images are pinned by digest.
+- **Security: the image is scanned and signed.** The image now runs on distroless Debian 13 (the Debian 12 base carried four pending security updates; Debian 13 has none). Each release's image is scanned with Trivy before it is pushed, and a fixable HIGH or CRITICAL vulnerability stops the release. The pushed image is signed with cosign (keyless, through GitHub); `.github/workflows/image.yml` shows the `cosign verify` command.
+
 ## v0.4.0 (preview)
 
 - **A `llm.conf` that holds a key must be private.** When the file holds `api_key` or `embed_api_key` and other users can read it, the LLM and search commands refuse to run and print the `chmod 600` line that fixes it, as `ssh` does for a private key. The mode check is Unix-only; on Windows the permission bits do not say who can read a file. A file with no key can stay readable.

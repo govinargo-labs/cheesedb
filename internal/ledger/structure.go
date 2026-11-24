@@ -54,6 +54,7 @@ func canonicalLegs(legs []Leg) ([]Leg, error) {
 		return nil, fmt.Errorf("%w: a memory needs at least one leg", ErrBadLegs)
 	}
 	out := make([]Leg, len(legs))
+	seen := legSet{}
 	for i, leg := range legs {
 		if len(leg) == 0 {
 			return nil, fmt.Errorf("%w: leg %d has no parents", ErrBadLegs, i)
@@ -65,14 +66,33 @@ func canonicalLegs(legs []Leg) ([]Leg, error) {
 				return nil, fmt.Errorf("%w: leg %d lists parent %d twice", ErrBadLegs, i, leg[j])
 			}
 		}
-		for k := range i {
-			if slices.Equal(out[k], leg) {
-				return nil, fmt.Errorf("%w: legs %d and %d are identical", ErrBadLegs, k, i)
-			}
+		if k, dup := seen.add(leg, i); dup {
+			return nil, fmt.Errorf("%w: legs %d and %d are identical", ErrBadLegs, k, i)
 		}
 		out[i] = leg
 	}
 	return out, nil
+}
+
+// legSet finds identical legs in one pass. Comparing each leg with every
+// earlier one took time that grew with the square of the leg count: one
+// request with 200,000 legs held a CPU for 15 s, and replay paid it again on
+// every open. The key is the leg's sorted parents as uvarints; uvarints are
+// self-delimiting, so two legs share a key exactly when they are equal.
+type legSet map[string]int
+
+// add records leg as leg number i. If an identical leg was added before, it
+// returns that leg's number and true instead.
+func (s legSet) add(leg Leg, i int) (int, bool) {
+	var key []byte
+	for _, p := range leg {
+		key = binary.AppendUvarint(key, uint64(p))
+	}
+	if k, ok := s[string(key)]; ok {
+		return k, true
+	}
+	s[string(key)] = i
+	return 0, false
 }
 
 // encodeMemory writes legs that canonicalLegs has already checked.
@@ -97,6 +117,7 @@ func decodeMemory(b []byte, self ID) ([]Leg, error) {
 		return nil, fmt.Errorf("%w: memory with no legs", errMalformed)
 	}
 	legs := make([]Leg, 0, nLegs)
+	seen := legSet{}
 	for range nLegs {
 		nParents := d.count()
 		if d.err == nil && nParents == 0 {
@@ -116,8 +137,8 @@ func decodeMemory(b []byte, self ID) ([]Leg, error) {
 			}
 			leg = append(leg, p)
 		}
-		for _, prev := range legs {
-			if d.err == nil && slices.Equal(prev, leg) {
+		if d.err == nil {
+			if _, dup := seen.add(leg, len(legs)); dup {
 				return nil, fmt.Errorf("%w: identical legs", errMalformed)
 			}
 		}

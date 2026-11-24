@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -10,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -339,6 +343,90 @@ func TestServeTLSAuto(t *testing.T) {
 	}
 	if pem2, _ := os.ReadFile(filepath.Join(certDir, "tls.crt")); !bytes.Equal(pem1, pem2) {
 		t.Fatal("a restart made a new certificate")
+	}
+}
+
+// The self-signed certificate is its own authority, so it could sign
+// certificates. Its name constraints must keep anything it signs to its own
+// names: a client that trusts tls.crt must reject a certificate for another
+// site made with tls.key, and still accept one for the server's names.
+func TestSelfSignedCannotVouchForOtherSites(t *testing.T) {
+	certFile, keyFile, err := selfSigned(t.TempDir(), []string{"cheesedb.example", "10.0.0.7"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(pair.Leaf)
+
+	forge := func(dns string, ip net.IP) *x509.Certificate {
+		t.Helper()
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(2),
+			NotBefore:    time.Now().Add(-time.Hour),
+			NotAfter:     time.Now().Add(time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		}
+		if dns != "" {
+			tmpl.DNSNames = []string{dns}
+		}
+		if ip != nil {
+			tmpl.IPAddresses = []net.IP{ip}
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, pair.Leaf, &key.PublicKey, pair.PrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	verify := func(c *x509.Certificate, name string) error {
+		_, err := c.Verify(x509.VerifyOptions{Roots: roots, DNSName: name})
+		return err
+	}
+
+	for _, bad := range []struct {
+		dns, name string
+		ip        net.IP
+	}{
+		{dns: "bank.example", name: "bank.example"},
+		{dns: "example", name: "example"},
+		{ip: net.ParseIP("8.8.8.8"), name: "8.8.8.8"},
+		{ip: net.ParseIP("10.0.0.8"), name: "10.0.0.8"},
+	} {
+		if err := verify(forge(bad.dns, bad.ip), bad.name); err == nil {
+			t.Errorf("a certificate for %s signed with tls.key was trusted", bad.name)
+		}
+	}
+	for _, good := range []struct {
+		dns, name string
+		ip        net.IP
+	}{
+		{dns: "cheesedb.example", name: "cheesedb.example"},
+		{dns: "localhost", name: "localhost"},
+		{ip: net.ParseIP("10.0.0.7"), name: "10.0.0.7"},
+		{ip: net.ParseIP("127.0.0.1"), name: "127.0.0.1"},
+	} {
+		if err := verify(forge(good.dns, good.ip), good.name); err != nil {
+			t.Errorf("a certificate for %s, one of the server's own names, was refused: %v", good.name, err)
+		}
+	}
+	// The certificate itself still serves every one of its names.
+	for _, name := range []string{"localhost", "127.0.0.1", "::1", "cheesedb.example", "10.0.0.7"} {
+		if err := verify(pair.Leaf, name); err != nil {
+			t.Errorf("tls.crt for %s: %v", name, err)
+		}
 	}
 }
 

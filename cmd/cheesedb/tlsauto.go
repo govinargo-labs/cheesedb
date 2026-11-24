@@ -86,6 +86,23 @@ func selfSigned(dir string, hosts []string, out io.Writer) (certFile, keyFile st
 			tmpl.DNSNames = append(tmpl.DNSNames, h)
 		}
 	}
+	// Being its own authority, it could sign a certificate for any website,
+	// and a machine that trusts it would believe that certificate. Name
+	// constraints limit it to its own names and addresses, and it may sign
+	// no further authorities, so tls.key in the wrong hands cannot be used
+	// to impersonate other sites.
+	tmpl.MaxPathLenZero = true
+	tmpl.PermittedDNSDomainsCritical = true
+	for _, name := range tmpl.DNSNames {
+		tmpl.PermittedDNSDomains = append(tmpl.PermittedDNSDomains, strings.TrimPrefix(name, "*."))
+	}
+	for _, ip := range tmpl.IPAddresses {
+		bits := 8 * len(ip)
+		if ip4 := ip.To4(); ip4 != nil {
+			ip, bits = ip4, 32
+		}
+		tmpl.PermittedIPRanges = append(tmpl.PermittedIPRanges, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		return "", "", err
