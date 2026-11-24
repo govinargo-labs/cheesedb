@@ -1,6 +1,6 @@
 module github.com/govinargo-labs/cheesedb/bench
 
-go 1.26.5
+go 1.26.11
 
 require (
 	github.com/govinargo-labs/cheesedb v0.0.0

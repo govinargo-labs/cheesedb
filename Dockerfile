@@ -20,7 +20,10 @@
 # certificate. One container per store: the store's lock lets only one
 # server in.
 
-FROM golang:1.26.5 AS build
+# Base images are pinned by digest as well as tag, so a changed or replaced
+# image on the registry cannot slip into a build. To update one, change
+# both: the digest is the multi-CPU index digest the registry reports.
+FROM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS build
 WORKDIR /src
 COPY . .
 ARG VERSION=devel
@@ -30,7 +33,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.builtVersion=${VERS
  && mkdir /out/data
 
 # distroless: no shell, no package manager, a non-root user (65532).
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 COPY --from=build /out/cheesedb /usr/local/bin/cheesedb
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV CHEESEDB_DIR=/data

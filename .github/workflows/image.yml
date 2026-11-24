@@ -8,6 +8,14 @@ name: image
 #
 # Nothing to set up: the workflow's own GITHUB_TOKEN signs in to ghcr.io.
 # Actions are pinned to full commit SHAs (the tag is in the comment).
+#
+# Before anything is pushed, the image is scanned with Trivy, and a known
+# HIGH or CRITICAL vulnerability with a fix stops the release. After the
+# push, the image is signed with cosign, keyless: the signature says this
+# workflow, in this repository, built it. Check it with:
+#   cosign verify ghcr.io/govinargo-labs/cheesedb:<version> \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate-identity-regexp '^https://github\.com/govinargo-labs/cheesedb/\.github/workflows/image\.yml@refs/'
 on:
   release:
     types: [published]
@@ -26,6 +34,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write   # keyless signing: cosign proves this workflow made the image
     concurrency:
       group: image
       cancel-in-progress: false   # never stop a push halfway
@@ -67,7 +76,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Scan before pushing: the amd64 image, built from the same Dockerfile
+      # and the same pinned base images as the one pushed. Trivy runs from
+      # its own image, pinned by digest, and gets the image as a file on
+      # stdin, not access to Docker.
+      - name: Build the amd64 image to scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: cheesedb:scan
+          build-args: VERSION=${{ steps.v.outputs.tag }}
+
+      - name: Scan the image (Trivy)
+        env:
+          TRIVY: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+        run: |
+          docker save cheesedb:scan | docker run --rm -i --entrypoint sh "$TRIVY" -c \
+            'cat > /tmp/img.tar && trivy image --input /tmp/img.tar --scanners vuln,secret --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1'
+
       - name: Build and push (amd64 + arm64)
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -82,3 +113,16 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
           sbom: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
+      # Signed by digest, not tag, so the signature belongs to exactly the
+      # image just pushed. --recursive signs each CPU's image as well as
+      # the list that points to them.
+      - name: Sign the image (cosign, keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes --recursive "ghcr.io/govinargo-labs/cheesedb@$DIGEST"

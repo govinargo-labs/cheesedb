@@ -39,6 +39,7 @@ type Options struct {
 	AdminKey *[32]byte
 
 	MaxRequests   int           // requests running at once before 503 busy; default 256
+	MaxPerAgent   int           // one agent's requests running at once before 429; default MaxRequests/8
 	IdleClose     time.Duration // close an agent unused this long; default 10 minutes
 	MaxOpenAgents int           // agents kept open between requests; default 64
 
@@ -55,11 +56,13 @@ type Server struct {
 	warm  *warmSet
 	mux   *http.ServeMux
 
-	mu      sync.Mutex
-	running int // requests running now, for /v1/admin/status
+	mu       sync.Mutex
+	running  int              // requests running now, for /v1/admin/status
+	perAgent map[[32]byte]int // running requests per agent, keyed by the SHA-256 of its token; an entry exists only while its agent has one running
 }
 
-// Limits on every request, so one client cannot starve the others.
+// Limits on every request. With MaxPerAgent, they keep one client from
+// starving the others.
 const (
 	maxBody   = 2 << 20 // a record body is at most 1 MiB; JSON escaping can double it
 	maxK      = 1000    // results per search
@@ -78,6 +81,9 @@ func New(s *cheesedb.Store, o Options) *Server {
 	if o.MaxRequests <= 0 {
 		o.MaxRequests = 256
 	}
+	if o.MaxPerAgent <= 0 {
+		o.MaxPerAgent = max(o.MaxRequests/8, 1)
+	}
 	if o.IdleClose <= 0 {
 		o.IdleClose = 10 * time.Minute
 	}
@@ -85,11 +91,12 @@ func New(s *cheesedb.Store, o Options) *Server {
 		o.MaxOpenAgents = 64
 	}
 	srv := &Server{
-		store: s,
-		opts:  o,
-		slots: make(chan struct{}, o.MaxRequests),
-		warm:  newWarmSet(s, o.IdleClose, o.MaxOpenAgents),
-		mux:   http.NewServeMux(),
+		store:    s,
+		opts:     o,
+		slots:    make(chan struct{}, o.MaxRequests),
+		warm:     newWarmSet(s, o.IdleClose, o.MaxOpenAgents),
+		mux:      http.NewServeMux(),
+		perAgent: map[[32]byte]int{},
 	}
 	srv.routes()
 	srv.warm.start(max(min(idleCheck, o.IdleClose/2), time.Millisecond))
@@ -222,6 +229,16 @@ func (s *Server) withAgent(f agentFunc) http.HandlerFunc {
 			s.writeErr(w, errUnauthorized)
 			return
 		}
+		// Before the agent is opened and before the body is read: a client
+		// that sends its bodies slowly holds a slot for up to ReadTimeout,
+		// and without this one token could hold every slot.
+		key := sha256.Sum256(tok[:])
+		if !s.enterAgent(key) {
+			w.Header().Set("Retry-After", "1")
+			fail(w, http.StatusTooManyRequests, "agent_busy", "too many requests at once for this agent; retry shortly")
+			return
+		}
+		defer s.leaveAgent(key)
 		a, err := s.store.OpenAgent(tok)
 		if err != nil {
 			s.writeErr(w, err)
@@ -230,6 +247,28 @@ func (s *Server) withAgent(f agentFunc) http.HandlerFunc {
 		defer a.Close()
 		s.warm.keep(tok)
 		f(w, r, a)
+	}
+}
+
+// enterAgent counts one more running request for the agent whose token
+// hashes to key, unless it already has MaxPerAgent running.
+func (s *Server) enterAgent(key [32]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.perAgent[key] >= s.opts.MaxPerAgent {
+		return false
+	}
+	s.perAgent[key]++
+	return true
+}
+
+// leaveAgent undoes enterAgent. The entry goes at zero, so the map holds
+// only agents with a request running and cannot grow from made-up tokens.
+func (s *Server) leaveAgent(key [32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.perAgent[key]--; s.perAgent[key] <= 0 {
+		delete(s.perAgent, key)
 	}
 }
 

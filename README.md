@@ -71,7 +71,7 @@ go get github.com/govinargo-labs/cheesedb                          # the library
 go install github.com/govinargo-labs/cheesedb/cmd/cheesedb@latest  # the command
 ```
 
-Requires Go 1.26.5 or newer. Developed and tested on macOS; Linux runs the same tests in CI. Windows is not supported yet.
+Requires Go 1.26.11 or newer. Developed and tested on macOS; Linux runs the same tests in CI. Windows is not supported yet.
 
 ## Quick start
 

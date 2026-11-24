@@ -481,6 +481,40 @@ func TestBusy(t *testing.T) {
 	e.ok(e.req("GET", "/v1/memories", tok, ""))
 }
 
+// One agent cannot take every slot: beyond MaxPerAgent of its own requests
+// it gets 429, while another agent still gets through.
+func TestBusyAgent(t *testing.T) {
+	e := newEnv(t, Options{MaxRequests: 4, MaxPerAgent: 1})
+	alice, bob := e.agent("alice"), e.agent("bob")
+	pr, pw := io.Pipe()
+	r := httptest.NewRequest("POST", "http://"+host+"/v1/lots", pr)
+	done := make(chan reply)
+	go func() { done <- e.send(r, alice) }()
+	waitFor(t, "alice's slow request to start", func() bool {
+		e.srv.mu.Lock()
+		defer e.srv.mu.Unlock()
+		return len(e.srv.perAgent) == 1
+	})
+
+	busy := e.req("GET", "/v1/memories", alice, "")
+	e.want(busy, 429, "agent_busy")
+	if busy.header.Get("Retry-After") == "" {
+		t.Fatal("429 agent_busy without Retry-After")
+	}
+	e.ok(e.req("GET", "/v1/memories", bob, ""))
+
+	pw.Write([]byte(`{"source_type":"doc","text":"slow"}`))
+	pw.Close()
+	e.ok(<-done)
+	e.ok(e.req("GET", "/v1/memories", alice, ""))
+	e.srv.mu.Lock()
+	left := len(e.srv.perAgent)
+	e.srv.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d agents still counted after every request ended", left)
+	}
+}
+
 func TestAdmin(t *testing.T) {
 	e := newEnv(t, Options{})
 	e.want(e.req("POST", "/v1/admin/agents", "wrong", `{"name":"carol"}`), 401, "unauthorized")
