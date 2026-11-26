@@ -4,7 +4,8 @@
 //
 // Every change is first written to the log as a record and only then
 // applied to the in-memory state, so replaying the log on Open rebuilds the
-// exact same state. See ARCHITECTURE.md sections 1 and 3.
+// exact same state. A snapshot of the state (snapshot.go) lets Open replay
+// only the newest records. See ARCHITECTURE.md sections 1 and 3.
 package ledger
 
 import (
@@ -82,18 +83,19 @@ type Ledger struct {
 	// can look an index up with mu's read lock.
 	indexes map[string]*vindex
 	closed  bool // set by Close, under write
+
+	// The snapshot on disk (state.snap, snapshot.go). Both are changed
+	// only by holders of write, or by Open.
+	snapAt  uint64 // records the snapshot on disk covers; 0 if there is none
+	snapBad bool   // a redaction failed part way: the state may not match the files, so Close writes no snapshot
 }
 
-// Open opens (or creates) the ledger in dir and rebuilds its state by
-// replaying every record.
+// Open opens (or creates) the ledger in dir and rebuilds its state: from
+// its snapshot and the records after it, or, without a good snapshot, by
+// replaying every record. Report.Snapshot says which.
 func Open(dir string, opts logfile.Options) (*Ledger, logfile.Report, error) {
 	l := &Ledger{dir: filepath.Clean(dir), opts: opts}
-	log, rep, err := logfile.Open(dir, opts, func(r *record.Record) error {
-		if err := l.st.apply(r); err != nil {
-			return fmt.Errorf("%w: record %d: %v", logfile.ErrCorrupt, r.ID, err)
-		}
-		return nil
-	})
+	log, rep, err := l.openLog()
 	if err != nil {
 		return nil, rep, err
 	}
@@ -136,12 +138,26 @@ func Open(dir string, opts logfile.Options) (*Ledger, logfile.Report, error) {
 
 // redact erases ids' content on disk, then records that in the state.
 // Callers hold l.write (or are still in Open).
+//
+// The snapshot is deleted first: it says which records still have their
+// content, and the rewrite moves records. A crash in between leaves no
+// snapshot, so the next Open replays everything. Close writes a new one.
 func (l *Ledger) redact(ids []ID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := removeSnapshot(l.dir); err != nil {
+		return fmt.Errorf("ledger: deleting the snapshot before an erase: %w", err)
+	}
+	l.snapAt = 0
 	raw := make([]uint64, len(ids))
 	for i, id := range ids {
 		raw[i] = uint64(id)
 	}
 	if err := l.log.Redact(raw); err != nil {
+		// Some segments may already be rewritten. The state does not
+		// say so, so it must not be saved; the next Open replays.
+		l.snapBad = true
 		return err
 	}
 	l.mu.Lock()
@@ -151,17 +167,27 @@ func (l *Ledger) redact(ids []ID) error {
 }
 
 // Verify re-reads the whole log from disk and checks every record, the hash
-// chain linking them, and every seal. Open did the same; Verify catches
-// files changed since. It returns logfile.ErrCorrupt on any mismatch, and
+// chain linking them, and every seal. A full replay at Open did the same,
+// so Verify catches files changed since; an Open from a snapshot checked
+// only the records after it (and each segment's first and last), so Verify
+// is then the only full check. It returns logfile.ErrCorrupt on any mismatch, and
 // otherwise the head: the newest record's chain hash, worth keeping
 // elsewhere (see logfile.Log.Verify).
 func (l *Ledger) Verify() ([32]byte, error) { return l.log.Verify() }
 
 // Close closes the log and every loaded index. Everything acknowledged is
 // already on disk. It waits for a write in progress to finish.
+//
+// If snapshotEvery records were added since the last snapshot, it first
+// writes a new one, so the next Open is quick. A snapshot that cannot be
+// written is skipped: it holds nothing the log does not, so Close still
+// succeeds and the next Open replays more.
 func (l *Ledger) Close() error {
 	l.write.Lock()
 	defer l.write.Unlock()
+	if !l.closed && l.snapshotDue() {
+		l.saveSnapshot()
+	}
 	l.closed = true
 	return errors.Join(l.closeIndexes(), l.log.Close())
 }

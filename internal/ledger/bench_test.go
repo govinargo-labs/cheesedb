@@ -141,18 +141,28 @@ func openBench(b *testing.B, dir string) *Ledger {
 	return l
 }
 
-// BenchmarkOpen measures startup: replaying the whole log to rebuild the
-// state. It also reports RAM and disk per memory, since it has a whole
-// ledger loaded anyway.
+// closeNoSnapshot closes l without writing a snapshot, so the next Open
+// still replays the whole log.
+func closeNoSnapshot(l *Ledger) error {
+	l.snapAt = uint64(len(l.st.nodes))
+	return l.Close()
+}
+
+// BenchmarkOpen measures startup without a snapshot: replaying the whole
+// log to rebuild the state. It also reports RAM and disk per memory, since
+// it has a whole ledger loaded anyway.
 func BenchmarkOpen(b *testing.B) {
 	for _, size := range benchSizes {
 		b.Run(sizeName(size), func(b *testing.B) {
 			dir := dataset(b, size)
+			if err := removeSnapshot(dir); err != nil {
+				b.Fatal(err)
+			}
 			heap := heapPerMemory(b, dir, size)
 			disk := diskBytes(b, dir)
 			b.ReportAllocs()
 			for b.Loop() {
-				openBench(b, dir).Close()
+				closeNoSnapshot(openBench(b, dir))
 			}
 			b.ReportMetric(heap, "heap-B/memory")
 			b.ReportMetric(float64(disk)/float64(size), "disk-B/memory")
@@ -171,7 +181,7 @@ func heapPerMemory(b *testing.B, dir string, size int) float64 {
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(l)
-	l.Close()
+	closeNoSnapshot(l)
 	return float64(after.HeapAlloc-before.HeapAlloc) / float64(size)
 }
 
@@ -189,6 +199,55 @@ func diskBytes(b *testing.B, dir string) int64 {
 		total += info.Size()
 	}
 	return total
+}
+
+// BenchmarkOpenSnapshot measures startup from a snapshot that covers the
+// whole log: read and check state.snap, check each segment's first and
+// last record, rebuild the state. Compare with BenchmarkOpen.
+func BenchmarkOpenSnapshot(b *testing.B) {
+	for _, size := range benchSizes {
+		b.Run(sizeName(size), func(b *testing.B) {
+			dir := dataset(b, size)
+			l := openBench(b, dir)
+			if err := l.saveSnapshot(); err != nil {
+				b.Fatal(err)
+			}
+			closeNoSnapshot(l)
+			info, err := os.Stat(filepath.Join(dir, snapFile))
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				l, rep, err := Open(dir, logfile.Options{})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if rep.Snapshot != rep.Records {
+					b.Fatalf("Snapshot = %d, Records = %d: the snapshot was not used", rep.Snapshot, rep.Records)
+				}
+				closeNoSnapshot(l)
+			}
+			b.ReportMetric(float64(info.Size())/float64(size), "snap-B/memory")
+		})
+	}
+}
+
+// BenchmarkSnapshotWrite measures what Close pays when it writes a
+// snapshot: encode the state, write, fsync, rename, fsync the folder.
+func BenchmarkSnapshotWrite(b *testing.B) {
+	for _, size := range benchSizes {
+		b.Run(sizeName(size), func(b *testing.B) {
+			l := openBench(b, dataset(b, size))
+			defer closeNoSnapshot(l)
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := l.saveSnapshot(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 // BenchmarkGet reads a random memory by id: offset table lookup, one pread,

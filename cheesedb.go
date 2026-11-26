@@ -23,6 +23,9 @@
 //	    agent.key          SHA-256 of the token, never the token itself
 //	    000001.seg ...     the agent's log (internal/logfile)
 //	    000001.seal ...
+//	    state.snap         a snapshot of the agent's state, so opening replays
+//	                       only newer records; only once the log has 1,000
+//	                       records (internal/ledger/snapshot.go)
 //	    index-64656661756c74/   a vector index ("default"), only if created
 //	      index.meta       dims and label
 //	      000001.seg ...   its own log of vectors
@@ -487,8 +490,8 @@ func (a *Agent) ledger() (*ledger.Ledger, error) {
 	return a.sh.led, nil
 }
 
-// Report says what opening this agent's log found (records replayed, any
-// torn tail cut off), so a recovery is never silent.
+// Report says what opening this agent's log found (records, how many came
+// from the snapshot, any torn tail cut off), so a recovery is never silent.
 func (a *Agent) Report() Report { return a.sh.report }
 
 // AddLot registers a source. See ledger.Ledger.AddLot.
@@ -562,7 +565,8 @@ func (a *Agent) Compact() (int, error) {
 
 // Verify checks this agent's whole log on disk and returns its head
 // fingerprint. Keep the head somewhere else to detect a rebuilt or
-// shortened log later.
+// shortened log later. Opening from a snapshot does not re-read older
+// records, so Verify is the full check (ARCHITECTURE.md section 6).
 func (a *Agent) Verify() ([32]byte, error) {
 	l, err := a.ledger()
 	if err != nil {
