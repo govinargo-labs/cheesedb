@@ -177,7 +177,7 @@ footer .m{margin-left:auto;color:#fff;font-weight:800;letter-spacing:.24em;font-
 
 <!-- 2 IN MEMORY -->
 <section class="sec mem">
-  <h2><i>2</i>IN MEMORY <small>rebuilt by replay on open, never saved</small></h2>
+  <h2><i>2</i>IN MEMORY <small>rebuilt on open: from state.snap plus newer records, or by replaying the log</small></h2>
 
   <div class="card mcard" style="left:32px;width:410px">
     <h3>🌳 Family tree <em style="color:var(--red);font-weight:700">after Recall(C)</em></h3>
@@ -256,6 +256,7 @@ footer .m{margin-left:auto;color:#fff;font-weight:800;letter-spacing:.24em;font-
     <div class="frow"><span>🔒</span><b>LOCK</b><span>one open store per folder</span></div>
     <div class="frow"><span>📁</span><b>616c696365/</b><span>the agent alice: folder name is hex</span></div>
     <div class="frow"><span>📄</span><b>agent.key</b><span>SHA-256 of the token, never the token</span></div>
+    <div class="frow"><span>💾</span><b>state.snap</b><span>saved graph, so open replays less</span></div>
     <div class="frow ix"><span>🧭</span><b>index-64656661756c74/</b><span>its search index “default” (optional)</span></div>
   </div>
 
@@ -316,7 +317,7 @@ footer .m{margin-left:auto;color:#fff;font-weight:800;letter-spacing:.24em;font-
   <text class="al" x="1496" y="626" fill="#16213A">every call goes through the agent’s ledger</text>
   <!-- replay and append -->
   <line x1="134" y1="1126" x2="134" y2="1086" stroke="#6B45D8" stroke-width="3" stroke-dasharray="7 6" marker-end="url(#av)"/>
-  <text class="al" x="152" y="1110" fill="#6B45D8">replay on open: <tspan font-weight="500" fill="#5B6478">the logs rebuild the graph and the index</tspan></text>
+  <text class="al" x="152" y="1110" fill="#6B45D8">open: <tspan font-weight="500" fill="#5B6478">state.snap + newer records rebuild the graph; the index replays its log</tspan></text>
   <line x1="1480" y1="1082" x2="1480" y2="1124" stroke="#12866A" stroke-width="3" marker-end="url(#ag)"/>
   <text class="al" x="1496" y="1110" fill="#12866A">append + fsync: <tspan font-weight="500" fill="#5B6478">group commit, one fsync per batch</tspan></text>
 </svg>

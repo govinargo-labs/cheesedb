@@ -93,8 +93,14 @@ type Entry struct {
 
 // Report says what Open found, so a recovery is never silent.
 type Report struct {
-	Records      int   // complete records replayed
+	Records      int   // complete records in the log, replayed or covered by a snapshot
 	DroppedBytes int64 // torn tail cut off; 0 if the log ended cleanly
+
+	// Snapshot counts the records loaded from the ledger's snapshot
+	// (state.snap) instead of replayed; only the Records - Snapshot newer
+	// ones were replayed. 0 means the whole log was replayed (set by the
+	// ledger).
+	Snapshot int
 
 	// ResumedRollover means a crash happened after the last segment was
 	// sealed but before the next one was created; Open created it.
@@ -150,14 +156,19 @@ type Log struct {
 
 // request is one AppendBatch (or Redact) call travelling to the committer.
 type request struct {
-	recs   []*record.Record
-	size   int         // encoded bytes
-	redact []uint64    // set for a Redact request instead of recs (redact.go)
-	reply  chan result // buffered, so the committer never blocks on it
+	recs     []*record.Record
+	size     int         // encoded bytes
+	redact   []uint64    // set for a Redact request instead of recs (redact.go)
+	position bool        // set for a Position request instead of recs (position.go)
+	reply    chan result // buffered, so the committer never blocks on it
 }
 
+// alone reports whether req must run on its own, not in a batch of appends.
+func (req *request) alone() bool { return req.redact != nil || req.position }
+
 type result struct {
-	first uint64 // id of the first record; the rest follow in order
+	first uint64    // id of the first record; the rest follow in order
+	pos   *Position // for a Position request
 	err   error
 }
 
@@ -165,6 +176,25 @@ type result struct {
 // record in id order. fn is how the layer above rebuilds its state without
 // this package holding every record in memory. fn may be nil.
 func Open(dir string, opts Options, fn func(*record.Record) error) (*Log, Report, error) {
+	return open(dir, opts, nil, fn)
+}
+
+// OpenAt opens the log like Open, but starts from p, a Position saved
+// earlier: it checks p against the files (see resume) and then replays,
+// and hands to fn, only the records after p. If p does not match, it
+// returns an error wrapping ErrStale, having changed nothing on disk;
+// the caller then opens with Open, which replays everything.
+//
+// Records before p are not read again, so damage or edits to them go
+// unnoticed until Verify. That is the price of a fast open.
+func OpenAt(dir string, opts Options, p *Position, fn func(*record.Record) error) (*Log, Report, error) {
+	if p == nil {
+		return nil, Report{}, fmt.Errorf("%w: no position", ErrStale)
+	}
+	return open(dir, opts, p, fn)
+}
+
+func open(dir string, opts Options, p *Position, fn func(*record.Record) error) (*Log, Report, error) {
 	segSize, err := opts.segmentSize()
 	if err != nil {
 		return nil, Report{}, err
@@ -187,6 +217,11 @@ func Open(dir string, opts Options, fn func(*record.Record) error) (*Log, Report
 		}
 		lastSealed = lastSealed || s == n
 	}
+	// Check this before openSegments, which creates segment 1 in an empty
+	// folder: a position never applies to a log that is not there.
+	if p != nil && len(p.segs) > n {
+		return nil, Report{}, fmt.Errorf("%w: it covers %d segments, the log has %d", ErrStale, len(p.segs), n)
+	}
 
 	l := &Log{
 		dir:     dir,
@@ -199,7 +234,13 @@ func Open(dir string, opts Options, fn func(*record.Record) error) (*Log, Report
 		l.closeFiles()
 		return nil, Report{}, err
 	}
-	rep, err := l.replay(fn, lastSealed)
+	if p != nil {
+		if err := l.resume(p); err != nil {
+			l.closeFiles()
+			return nil, Report{}, err
+		}
+	}
+	rep, err := l.replay(fn, lastSealed, p)
 	if err == nil && lastSealed {
 		// Finish the interrupted rollover: the sealed segment is complete,
 		// so start the next one.
@@ -351,12 +392,22 @@ func createSegment(dir string, n int) (*os.File, error) {
 // hash chain links every record to the one before, across all segments,
 // builds the offset table and hands each record to fn. lastSealed says the
 // last segment already has a seal (a crash mid-rollover).
-func (l *Log) replay(fn func(*record.Record) error, lastSealed bool) (Report, error) {
+//
+// With a position p (already checked by resume), it starts just after p's
+// last record instead, in the middle of p's last segment.
+func (l *Log) replay(fn func(*record.Record) error, lastSealed bool, p *Position) (Report, error) {
 	var rep Report
-	for i := range l.segs {
-		n := i + 1
+	from, start := 1, int64(0)
+	if p != nil {
+		from, start = len(p.segs), p.segs[len(p.segs)-1].size
+		rep.Records = len(l.offsets)
+	}
+	for n := from; n <= len(l.segs); n++ {
 		sealed := n < len(l.segs) || lastSealed
-		if err := l.replaySegment(n, sealed, fn, &rep); err != nil {
+		if n > from {
+			start = 0
+		}
+		if err := l.replaySegment(n, sealed, start, fn, &rep); err != nil {
 			return rep, err
 		}
 	}
@@ -364,7 +415,8 @@ func (l *Log) replay(fn func(*record.Record) error, lastSealed bool) (Report, er
 	return rep, nil
 }
 
-// replaySegment reads segment n from start to end, one record at a time.
+// replaySegment reads segment n from byte start (0 unless a position says
+// otherwise) to the end, one record at a time.
 // For each good record it checks the id is the next one expected and that
 // its prevHash matches the chain so far, passes the record to fn (so the
 // layer above can rebuild its state) and notes where the record lives in
@@ -372,9 +424,12 @@ func (l *Log) replay(fn func(*record.Record) error, lastSealed bool) (Report, er
 // may be a crash's torn tail, so it is cut off; in a sealed segment it is
 // real damage, so Open fails with ErrCorrupt. A sealed segment must also
 // match its seal.
-func (l *Log) replaySegment(n int, sealed bool, fn func(*record.Record) error, rep *Report) error {
+func (l *Log) replaySegment(n int, sealed bool, start int64, fn func(*record.Record) error, rep *Report) error {
 	f := l.segs[n-1]
 	first := uint64(len(l.offsets)) + 1
+	if start > 0 {
+		first = l.firstID(n) // the segment's first records came from the position
+	}
 	info, err := f.Stat()
 	if err != nil {
 		return err
@@ -391,9 +446,9 @@ func (l *Log) replaySegment(n int, sealed bool, fn func(*record.Record) error, r
 
 	// Read through a 64 KiB buffer: one system call per buffer instead of
 	// two per record.
-	r := bufio.NewReaderSize(io.NewSectionReader(f, 0, end), 64<<10)
+	r := bufio.NewReaderSize(io.NewSectionReader(f, start, end-start), 64<<10)
 	var buf []byte
-	var off int64
+	off := start
 	for off < end {
 		var rec *record.Record
 		rec, buf, err = readRecord(r, buf)
@@ -571,6 +626,11 @@ func (l *Log) commitLoop() {
 			req.reply <- result{err: l.redactNow(req.redact)}
 			continue
 		}
+		if req.position {
+			p, err := l.positionNow()
+			req.reply <- result{pos: p, err: err}
+			continue
+		}
 
 		// Gather whatever else is already waiting. There is no timer: under
 		// light load a batch is one request and adds no delay; under heavy
@@ -581,7 +641,7 @@ func (l *Log) commitLoop() {
 		for {
 			select {
 			case r := <-l.reqs:
-				if r.redact != nil || size+r.size > MaxBatchBytes {
+				if r.alone() || size+r.size > MaxBatchBytes {
 					carry = r
 					break gather
 				}
@@ -738,20 +798,11 @@ func (l *Log) Read(id uint64) (*record.Record, error) {
 
 	// ReadAt reads at a given offset without moving the file position, so
 	// reads never disturb the committer's appends.
-	prefix := make([]byte, record.PrefixSize)
-	if _, err := f.ReadAt(prefix, off); err != nil {
-		return nil, err
-	}
-	n, err := record.BodyLen(prefix)
+	r, _, err := readAt(f, off)
 	if err != nil {
-		return nil, fmt.Errorf("%w: record %d (segment %d): %v", ErrCorrupt, id, p.seg, err)
-	}
-	buf := make([]byte, record.PrefixSize+n)
-	if _, err := f.ReadAt(buf, off); err != nil {
-		return nil, err
-	}
-	r, _, err := record.Decode(buf)
-	if err != nil {
+		if !isDamage(err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: record %d (segment %d): %v", ErrCorrupt, id, p.seg, err)
 	}
 	if r.ID != id {
@@ -762,7 +813,9 @@ func (l *Log) Read(id uint64) (*record.Record, error) {
 
 // Verify re-reads every record from disk and runs every check again: crc,
 // content digest, ids, the hash chain, and each sealed segment against its
-// seal. Open already did all of this; Verify catches files changed since.
+// seal. Open already did all of this, so Verify catches files changed
+// since. OpenAt did not, for the records before its position: Verify is
+// then the only full check.
 // It checks the records that existed when it started, so appends running
 // at the same time are fine.
 //

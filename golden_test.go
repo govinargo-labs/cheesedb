@@ -185,7 +185,7 @@ func TestGoldenStore(t *testing.T) {
 	defer s.Close()
 	ag := must(s.OpenAgent(tok))
 
-	if rep := ag.Report(); rep.DroppedBytes != 0 || rep.FinishedErase != 0 {
+	if rep := ag.Report(); rep.DroppedBytes != 0 || rep.FinishedErase != 0 || rep.Snapshot != 0 {
 		t.Fatalf("Report = %+v, want a clean open", rep)
 	}
 	head := must(ag.Verify())

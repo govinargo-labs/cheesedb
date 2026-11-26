@@ -2,8 +2,8 @@
 
 How the engine is built, as it stands now.
 
-![cheesedb internals: in-memory state rebuilt by replay, append-only
-segments on disk, and the three-part record](docs/architecture.png)
+![cheesedb internals: in-memory state rebuilt on open from a snapshot and
+the log, append-only segments on disk, and the three-part record](docs/architecture.png)
 
 The picture must match this file. When a design change affects anything shown in it, the picture gets updated too: edit its source, [docs/diagram/architecture.html](docs/diagram/architecture.html), and render it with the command at the top of that file.
 
@@ -51,7 +51,7 @@ cheesedb/             module github.com/govinargo-labs/cheesedb
   *.go                public API, package cheesedb: a folder of agents, token-based
                       agent handles (cheesedb.go, lock_*.go)
   internal/record/    one record <-> bytes. No files; pure functions.
-  internal/logfile/   the segments: Append + fsync, replay on Open, torn-tail recovery.
+  internal/logfile/   the segments: Append + fsync, replay on Open (or from a saved position), torn-tail recovery.
   internal/ledger/    memory logic: lots, legs, recall. state.go is the pure in-memory graph.
                       vector.go: vector indexes (section 9).
   internal/vecindex/  the in-memory vectors of one index (one byte per value) and exact
@@ -119,7 +119,7 @@ Store
    2. take the store lock
    3. key in the map of agents?              no → ErrBadToken
    4. already open? → reuse its ledger       (one ledger per agent: one writer)
-      not open?     → ledger.Open(folder)    replays the log (the Open flow below)
+      not open?     → ledger.Open(folder)    loads the snapshot, replays the rest (the Open flow below)
    5. count one more handle, release the lock
   │
   ▼
@@ -322,13 +322,18 @@ Agent gets kind, data, alive
 
 ```
 Ledger.Open
-  │  logfile.Open(dir, opts, apply)
+   0. read state.snap, if there is one: crc, version, position, state
+  │  logfile.OpenAt(dir, opts, position, apply)   with a good snapshot
+  │  logfile.Open(dir, opts, apply)               without one, or if OpenAt refuses it
   ▼
 Log
    1. check the options, create the folder if new
    2. list the .seg and .seal files; numbering must be 1..N
    3. open the segments (sealed read-only, active read-write)
-   4. replay every record, in order:
+   3b. (OpenAt only) check the position against the files: sizes,
+       each covered segment's first and last record, the seals;
+       take its offset table and chain hash
+   4. replay every record (OpenAt: every record after the position), in order:
         crc + digest → id is next → prevHash links the chain
         → ledger's state.apply rebuilds the family tree
         → offset table records where it lives
@@ -338,10 +343,11 @@ Log
    6. start the committer goroutine
   │
   ▼
-Ledger ready (Report says what was replayed or cut)
+Ledger ready (Report says how many records came from the snapshot,
+and what was replayed or cut)
 ```
 
-## 3. Storage: append-only segments on disk, state rebuilt in memory
+## 3. Storage: append-only segments on disk, state in memory (with a snapshot on disk)
 
 ### On disk: a store folder, one folder of segments per agent
 
@@ -351,6 +357,8 @@ Ledger ready (Report says what was replayed or cut)
   616c696365/               hex of the agent's name ("alice"), 0700
     agent.key               SHA-256 of the agent's token (never the token): version, hash, CRC-32C
     000001.seg  000001.seal ...
+    state.snap              snapshot of the state, so Open replays only newer records; only once
+                            the log has 1,000 records (see "Snapshots" below)
     index-64656661756c74/   a vector index ("default"), only if one was created (section 9)
       index.meta            dims, encoding, metric, label: version, fields, CRC-32C
       000001.seg  000001.seal ...   the index's own log of VECTOR records
@@ -417,9 +425,9 @@ offset  size  field
 - **Checked on every `Open` and by `Verify`.** Every segment except the last must have a seal matching its first id, last id and last chain hash. A seal with no segment is also `ErrCorrupt`.
 - **Redaction never invalidates a seal,** because it does not change chain hashes.
 
-### In memory: rebuilt by replay, never persisted
+### In memory: rebuilt on open, from a snapshot and the log
 
-The current state (which memories are alive) is NOT stored on disk. On open, the engine **replays** every segment in order and rebuilds the state in memory. This pattern is called event sourcing. (v3 snapshots will save this state to shorten replay.)
+The log is the truth. On open, the engine rebuilds the current state (which memories are alive) in memory by **replaying** the records in order. This pattern is called event sourcing. A **snapshot** (`state.snap`, below) saves the state, so Open replays only the records written after it. The snapshot is a shortcut, never the truth: if it does not match the log, it is thrown away and the whole log is replayed.
 
 | Structure | Holds | Used for |
 |---|---|---|
@@ -505,6 +513,44 @@ How to read it:
 - Cost: within one agent, writes do not share fsyncs.
 - Provision for multiple writers later: `state` does no I/O and takes no locks, so its checks and updates could move into the committer and run in id order. Replay would then need a "born dead" rule for a memory whose parent died just before it.
 
+### Snapshots (`state.snap`)
+
+Replaying 1M records took 0.76 s, paid on every `cheesedb` command and MCP tool call, since each opens the store again. A snapshot cuts that to about 0.1 s (`BENCHMARKS.md`).
+
+**What it holds.** No content: only ids, kinds, flags and legs, so erased text never ends up in it.
+
+```
+magic        8 bytes, "cdbsnap\0"
+version      1 byte, currently 1
+position     records covered; chain hash of the last one; per covered segment:
+             its size, its record count, the chain hash of its last record,
+             and the gaps between its record offsets (the offset table)
+nodes        per node: kind and flags (dead, content erased) in one byte;
+             for a memory, its legs encoded as in a MEMORY record
+erase        the erase targets (ids recalled with Erase)
+crc          CRC-32C over everything before it
+```
+
+Children and leg counters are not stored. Load rebuilds them from the legs and the dead flags: a leg's dead-parent count is the number of its parents that are dead.
+
+**When it is written.** By `Close`, when at least 1,000 records (`snapshotEvery`) are newer than the snapshot on disk. Written like a seal: temporary file, fsync, rename, fsync the folder. A crash leaves the old snapshot or the new one. A snapshot that cannot be written is skipped; `Close` still succeeds, and nothing is lost, since the snapshot holds nothing the log does not.
+- Writing one for 1M records takes about 80 ms, so a command that adds one record and exits pays it once every 1,000 runs.
+- After a redaction that failed part way, the state may not say which records are erased, so no snapshot is written until the next open.
+
+**Erase and Compact delete it first.** A redaction rewrites segments and moves records, and the snapshot says which records still have their content. So `state.snap` is deleted (and the folder fsynced) before the first segment is rewritten. A crash in between leaves no snapshot, and the next Open replays everything and finishes the erase. `Close` then writes a fresh one.
+
+**How Open checks it** (`logfile.OpenAt`). Before anything is used:
+- the file: magic, version, crc, and a state that replay could have built (every parent a lot or memory, no live memory without a live leg, every erase target dead);
+- each covered segment: exactly the saved size (the last one may have grown since), its seal (for all but the last), and two records read and checked (crc, digest, id, chain hash): the first must link to the previous segment's last hash, the last must have the saved chain hash and end exactly at the saved size.
+
+Then only the records after the snapshot are replayed, and the chain check runs on unbroken from the saved hash. A torn tail after the snapshot is cut, as in a full replay.
+
+**Any failure means a full replay,** exactly as without a snapshot, and the bad file is deleted: a damaged, truncated or empty file, an unknown version, a covered segment missing or of another size, a log shorter than the snapshot (restored from an older backup), a snapshot copied from another agent (same sizes, other chain hashes), or a record after it that no longer applies. `Report.Snapshot` says how many records came from the snapshot (0 for a full replay).
+
+**Why the size check is enough for redaction.** A redaction always makes its segment shorter (the salt alone is 16 bytes), so a snapshot taken before one, for example by an older cheesedb that knows nothing of snapshots, fails the size check, or, if the segment grew back, the last-record check.
+
+**What a snapshot does not check: the records in the middle of a covered segment.** See section 6. `Verify` reads them all.
+
 ## 4. Record format
 
 A record is an 8-byte prefix (`length`, `crc`) followed by a body. The body has three parts, matching the picture:
@@ -576,7 +622,7 @@ RECALL  target id, mode (1 = Fair, 2 = Strict), reason (1 = untrusted, 2 = erase
 Each record's **chain hash** (`Record.ChainHash()`, its "fingerprint") is SHA-256 over these fields, concatenated in on-disk order and encoded as on disk: version, type, id, prevHash, keyID, signerKeyID, contentDigest, structLen and the structural section.
 
 - **Writing:** the committer puts the previous record's chain hash into each record's `prevHash` (zeros for record 1). Each record is therefore locked to everything before it.
-- **`Open`:** replay recomputes every chain hash and compares it with the next record's `prevHash`. A mismatch is `ErrCorrupt`, never a torn tail, because a crash cannot produce a valid record with a wrong link. The cost is about 25% slower startup (`BENCHMARKS.md`).
+- **`Open`:** replay recomputes every chain hash and compares it with the next record's `prevHash`. A mismatch is `ErrCorrupt`, never a torn tail, because a crash cannot produce a valid record with a wrong link. The cost is about 25% slower startup (`BENCHMARKS.md`). With a snapshot, this runs only for the records after it, starting from the saved hash; older records get the checks in "Snapshots" (section 3) and are re-hashed by `Verify`.
 - **`Verify()`:** re-reads every segment from disk and repeats all checks: crc, content digest, ids, chain and seals. It catches files changed after `Open`, and it works while appends continue. It returns the **head fingerprint** (the newest record's chain hash; zeros for an empty log).
 - **Not detectable from the files alone:**
   - an edit followed by rebuilding every later link;
@@ -622,6 +668,21 @@ Before an fsync completes, the disk may save a write's blocks in any order. So a
 | A valid record with the wrong id, including segment N+1 not starting at segment N's last id + 1 | damage or a bug | `ErrCorrupt` |
 
 Known ambiguity: real damage inside the last ~1 MiB of the active segment looks like a torn batch, so those records are dropped (and reported) instead of failing loudly. Batch commit markers could remove this later.
+
+**With a snapshot** (`state.snap`, section 3):
+
+| Situation | Meaning | Action |
+|---|---|---|
+| A torn tail after the snapshot | a crash during the last batch | the snapshot is used; the tail is cut as above |
+| Snapshot damaged, truncated, empty or of an unknown version | a crash cannot cause it (it is renamed into place), so disk damage or an edit | full replay; the file is deleted |
+| A covered segment missing, of another size, or not matching its seal | the log changed after the snapshot (a redaction, a restore, damage) | full replay, which then finds out what is wrong; the file is deleted |
+| A covered segment's first or last record does not match the saved chain hashes | a snapshot from another agent, or another history | full replay; the file is deleted |
+| The log is shorter than the snapshot | the log was restored from an older copy, or its newest records removed | full replay; the file is deleted |
+| A crash between deleting the snapshot and an erase's rewrite | normal | full replay; the erase is finished (`Report.FinishedErase`) |
+| A crash while writing a snapshot | normal | the old snapshot (or none) is used; the `.tmp` file is removed |
+| **A record in the middle of a covered segment damaged or edited, same size** | disk damage or an edit | **not seen by `Open`**: the snapshot is used. `Get` of that record and `Verify` return `ErrCorrupt` |
+
+**The guarantee that changed.** Without a snapshot, every `Open` re-reads and re-hashes every record, so a damaged or edited log never loads. With one, `Open` reads only each covered segment's size, seal, first and last record, and the records after the snapshot. Damage or an edit in the middle of a covered segment that keeps its size is found by reading that record (`Get`, an erase) or by `Verify`, not by `Open`. `Verify` is now the full check: run it to be sure a store is intact (`TestSnapshotOpenSkipsOldRecords`).
 
 **Durability and group commit:** one committer goroutine per open log owns all writes.
 1. Callers hand records to it and wait. Salt, digest and validation run in the caller's goroutine first.

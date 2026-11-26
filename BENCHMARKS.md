@@ -83,9 +83,26 @@ Neo4j was run at 1M only. The two tables below have the other three engines at t
 | | 100k | 74.5 ms | 0.10 ms | 3.72 ms |
 | | 1M | **706 ms** | 0.10 ms | 2.99 ms |
 
-### Startup with the hash chain (checked on every Open)
+### Startup with a snapshot (new run, unreleased)
 
-Replay recomputes every record's chain hash, so a tampered log never loads silently. From an earlier run that measured startup before and after the hash chain was added (median of 3); the v0.3.0 run above has 7.16 ms, 74.5 ms and 706 ms:
+**A new run, not part of the v0.3.0 run above:** same machine (Apple M1 Max, 64 GB, macOS 26.5.2), Go 1.26.11, median of 3. Raw output: [`bench/results/snapshots/`](bench/results/snapshots/).
+
+Opening an agent from `state.snap` (ARCHITECTURE.md section 3) instead of replaying its whole log. The snapshot here covers the whole log; records written after it are replayed as before, at about the same cost per record as a full replay.
+
+| Size | Full replay | From a snapshot | Faster | Snapshot file | Writing a snapshot (at `Close`) |
+|---|---|---|---|---|---|
+| 10k | 7.31 ms | 1.27 ms | 5.8x | 11.3 B per memory | 12.2 ms |
+| 100k | 75.2 ms | 10.4 ms | 7.2x | 13.2 B per memory | 19.1 ms |
+| 1M | 728 ms | 90.5 ms | 8.0x | 13.5 B per memory (13.5 MB) | 79.1 ms |
+
+- At 1M, opening allocates 360 MB in 290 allocations, against 1.16 GB in 12.1M for a full replay.
+- `Close` writes a snapshot only once 1,000 records are newer than the last one, so a command that adds one record pays the write once every 1,000 runs. Most of the 12 ms at 10k is the two fsyncs (file and folder).
+- The full-replay numbers match the v0.3.0 run (706 ms at 1M) within a few percent.
+- **What the speed costs:** an open from a snapshot does not re-hash the records it covers. `Verify` still does (README Limits).
+
+### Startup with the hash chain (checked on every full replay)
+
+A full replay recomputes every record's chain hash, so a tampered log never loads silently. From an earlier run that measured startup before and after the hash chain was added (median of 3); the v0.3.0 run above has 7.16 ms, 74.5 ms and 706 ms:
 
 | Size | Before the hash chain | With the hash chain | Change |
 |---|---|---|---|
@@ -181,7 +198,7 @@ Small indexes pay a few exact reads from disk per search (about 0.2 ms); large o
 - **Recall cost does not grow with ledger size, in the engines measured at several sizes.** The SQL versions are indexed by parent, so they are proportional to the work too. cheesedb's walk stays at about 1.4-1.8 µs for 20 memories from 10k to 1M, but this property is not unique to cheesedb. Neo4j was measured at 1M only; its recall time did not change while its graph grew by about 50% during the run.
 
 **Where cheesedb loses**
-- **Startup.** cheesedb must replay its entire log on open, checking the hash chain as it goes: 706 ms at 1M memories, growing in a straight line with history. SQLite is ready in 0.1 ms. PostgreSQL and Neo4j answer a new connection in 3 ms and 1.2 ms, but they are servers that were already running: booting Neo4j with this dataset took 6.5 to 8.2 s in an earlier run. This is the main known weakness (a known, accepted weakness). v3 snapshots are the planned fix. Replay also allocates about 1 GB of short-lived memory at 1M.
+- **Startup.** Without a snapshot, cheesedb must replay its entire log on open, checking the hash chain as it goes: 706 ms at 1M memories, growing in a straight line with history. Replay also allocates about 1 GB of short-lived memory at 1M. SQLite is ready in 0.1 ms. PostgreSQL and Neo4j answer a new connection in 3 ms and 1.2 ms, but they are servers that were already running: booting Neo4j with this dataset took 6.5 to 8.2 s in an earlier run. This is the main known weakness. Snapshots (unreleased, new run above) cut it to 90.5 ms at 1M: still about 900x slower than SQLite, and still growing with history.
 - **RAM.** cheesedb keeps the whole graph in memory: about 205 bytes per memory, or about 205 MB for 1M. SQLite and PostgreSQL keep only what their caches hold, so they can serve ledgers much larger than RAM. cheesedb cannot.
 - **Disk vs SQLite.** cheesedb uses about 26% more disk than SQLite (314 B vs 249 B per memory). The fixed record header is 158 bytes plus a 16-byte salt, including 72 bytes reserved for v2 signatures and keys. Compared with PostgreSQL, it uses about 42% less, and compared with Neo4j (496 B) about 37% less.
 

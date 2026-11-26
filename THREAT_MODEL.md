@@ -29,7 +29,7 @@ Who cheesedb trusts, who it defends against, and what it explicitly does not pro
 | **Buggy tool or plugin** with one agent's handle | The same as the LLM above, by mistake | The same as above |
 | **Another agent's code** (holding only its own token) | Everything to its own agent | Open another agent: tokens are 32 random bytes, and the store keeps only their SHA-256, so the files do not reveal tokens. A name is not a token. |
 | **Someone who reads the store folder** (backup, stolen disk, same OS user) | Read every memory's content (not encrypted in v1). Read the agent names (hex is an encoding, not encryption). | Learn any token. Learn erased content from the current files: the content is gone, and its salted digest reveals nothing. (Older copies of the files may still hold it.) |
-| **Someone who writes the store folder** (same OS user, root, compromised host) | Corrupt or delete anything. Redact records. Rewrite the history if they recompute every hash after their change; remove the newest records. | Do it unnoticed if a head fingerprint was kept elsewhere and is compared later. Edit any record in the middle without rebuilding the chain (`Open` and `Verify` refuse it). |
+| **Someone who writes the store folder** (same OS user, root, compromised host) | Corrupt or delete anything. Redact records. Rewrite the history if they recompute every hash after their change; remove the newest records. Edit a record in the middle of a segment that `state.snap` covers, keeping its size, and have `Open` load the agent anyway (it does not re-read those records). Edit `state.snap` itself and recompute its crc, so the agent opens with a wrong state. | Do it unnoticed if a head fingerprint was kept elsewhere and is compared later. Edit any record in the middle without rebuilding the chain and pass `Verify`, which re-reads every record. |
 | **A crash or power loss** | Lose writes that were never acknowledged | Lose acknowledged writes. Leave a half-written record, seal or agent folder that `Open` does not detect and handle. |
 
 ## The local MCP server (`cheesedb mcp`, v1)
@@ -60,6 +60,7 @@ What it cannot do through the tools:
 - **Confidentiality at rest.** Content is stored unencrypted. A `keyID` field is reserved for per-agent encryption.
 - **The host program.** It can read every agent. Isolation by token protects agents from tools and from each other, not from the program that owns the store.
 - **Deliberate history rewrites by someone with write access,** unless the caller keeps head fingerprints elsewhere. v2: signatures and a witness.
+- **Edits that only `Verify` sees.** Since snapshots, `Open` re-reads only the records after the snapshot, plus each covered segment's size, seal, and first and last record. An edit or damage elsewhere in a covered segment that keeps its size is not seen at `Open`; reading that record, or `Verify`, finds it. The snapshot has only a crc, so whoever can write the folder can also give `Open` a wrong state (it is checked against the log's shape, not record by record). Run `Verify` to check a store you did not watch.
 - **Secure deletion.** `DeleteAgent` and redaction remove files and content. Backups, snapshots and SSD blocks may keep copies.
 - **Two processes on one store, where the lock cannot work.** The file lock is advisory: it stops a second cheesedb, not a program that ignores it. It may not work on network file systems, and some systems (Solaris, AIX) have none.
 - **Denial of service.** An agent can fill the disk, or make its own log slow to replay. Quotas are not built.
@@ -77,7 +78,8 @@ What it cannot do through the tools:
 | Folder 0700, files 0600 | Other OS users reading or changing the store |
 | CRC-32C per record and per seal | Accidental damage: torn writes, flipped bits |
 | Salted content digest | A content edit that keeps the crc valid. After redaction, guessing the erased content. |
-| Hash chain checked on every Open and by `Verify` | Editing, removing, inserting or reordering records in the middle of the history |
+| Hash chain checked by `Verify` and by a full replay at `Open` (from a snapshot: only the records after it) | Editing, removing, inserting or reordering records in the middle of the history |
+| Snapshot checks at `Open`: crc, a state replay could build, each covered segment's size and seal, its first and last record's chain hash | A damaged snapshot, one from another agent or history, or one older or newer than the log, being used: any mismatch means a full replay |
 | Head fingerprint from `Verify` | Rebuilt chains and removed newest records, when a copy is kept elsewhere |
 | Seal files | Damage to, or tampering with, sealed segments; a sealed segment being removed |
 | Write lock per agent; one ledger per agent in a store | Two writers on one agent's files inside one process |
