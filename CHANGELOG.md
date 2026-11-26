@@ -4,6 +4,13 @@ cheesedb follows [semantic versioning](https://semver.org). Until v1.0.0, the AP
 
 ## Unreleased
 
+- **Opening a large agent is about 8x faster: snapshots.** `Close` saves the agent's state in `state.snap` once 1,000 records are newer than the last snapshot, and opening loads it and replays only the records after it. At 1M memories, opening takes 90 ms instead of 728 ms ([BENCHMARKS.md](BENCHMARKS.md)). Every `cheesedb` command and MCP tool call opens the store again, so each pays less.
+  - The log stays the truth. A snapshot that is damaged, from another agent, or older or newer than the log is thrown away, and the whole log is replayed as before. `Erase` and `Compact` delete the snapshot before they rewrite anything.
+  - It holds no text: ids, flags and legs only.
+  - `Report.Snapshot` says how many records came from the snapshot (0 means a full replay). `Report.Records` still counts every record.
+  - **The guarantee that changed:** opening no longer re-hashes the records a snapshot covers. It checks each covered segment's size, seal, and first and last record. Damage or an edit elsewhere in an older segment is found by reading that record, or by `Verify`, which still checks everything. See README Limits.
+  - Stores from earlier versions open unchanged (they have no snapshot). An earlier version can open a store with a snapshot: it ignores the file, and if it writes or erases, the next open notices the snapshot no longer fits and replays everything.
+
 - **Security: built with Go 1.26.11.** Go 1.26.5 had known bugs in its HTTP server that let a client with no token crash `cheesedb serve` or use up its memory. cheesedb now needs Go 1.26.11 or newer (`go.mod`), and the Docker image is built with it. Everyone running `cheesedb serve` should update.
 - **Security: a memory with very many legs is checked quickly.** Finding identical legs compared every leg with every other one, so one request with 200,000 legs held a CPU for about 15 seconds, and opening the store paid that again. The check now takes one pass.
 - **Security: one agent cannot take every request slot.** A token holder could hold all 256 slots by sending request bodies slowly. Each agent may now run at most 32 requests at once (`MaxPerAgent`, by default an eighth of `MaxRequests`); beyond that it gets `429 agent_busy` with `Retry-After`, and other agents still get through.

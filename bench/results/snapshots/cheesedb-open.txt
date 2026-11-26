@@ -1,0 +1,34 @@
+$ go test -run '^$' -bench 'BenchmarkOpen|BenchmarkSnapshotWrite' -benchmem -count 3 ./internal/ledger/
+goos: darwin
+goarch: arm64
+pkg: github.com/govinargo-labs/cheesedb/internal/ledger
+cpu: Apple M1 Max
+BenchmarkOpen/10k-10         	     164	   7327473 ns/op	       311.8 disk-B/memory	       195.0 heap-B/memory	10089444 B/op	  120813 allocs/op
+BenchmarkOpen/10k-10         	     163	   7305527 ns/op	       311.8 disk-B/memory	       194.9 heap-B/memory	10089300 B/op	  120813 allocs/op
+BenchmarkOpen/10k-10         	     165	   7229798 ns/op	       311.8 disk-B/memory	       194.9 heap-B/memory	10089302 B/op	  120813 allocs/op
+BenchmarkOpen/100k-10        	      15	  75189897 ns/op	       313.8 disk-B/memory	       196.4 heap-B/memory	108256951 B/op	 1210496 allocs/op
+BenchmarkOpen/100k-10        	      15	  74985522 ns/op	       313.8 disk-B/memory	       196.4 heap-B/memory	108256917 B/op	 1210496 allocs/op
+BenchmarkOpen/100k-10        	      15	  76794694 ns/op	       313.8 disk-B/memory	       196.4 heap-B/memory	108256983 B/op	 1210496 allocs/op
+BenchmarkOpen/1M-10          	       2	 727797625 ns/op	       314.1 disk-B/memory	       208.2 heap-B/memory	1156124088 B/op	12112566 allocs/op
+BenchmarkOpen/1M-10          	       2	 742833312 ns/op	       314.1 disk-B/memory	       208.2 heap-B/memory	1156124088 B/op	12112569 allocs/op
+BenchmarkOpen/1M-10          	       2	 727469812 ns/op	       314.1 disk-B/memory	       208.2 heap-B/memory	1156124120 B/op	12112569 allocs/op
+BenchmarkOpenSnapshot/10k-10 	     930	   1266423 ns/op	        11.26 snap-B/memory	 3357591 B/op	     116 allocs/op
+BenchmarkOpenSnapshot/10k-10 	     955	   1265802 ns/op	        11.26 snap-B/memory	 3357596 B/op	     116 allocs/op
+BenchmarkOpenSnapshot/10k-10 	     969	   1284074 ns/op	        11.26 snap-B/memory	 3357582 B/op	     115 allocs/op
+BenchmarkOpenSnapshot/100k-10         	      98	  10385773 ns/op	        13.22 snap-B/memory	36440978 B/op	     136 allocs/op
+BenchmarkOpenSnapshot/100k-10         	     100	  10379770 ns/op	        13.22 snap-B/memory	36441031 B/op	     137 allocs/op
+BenchmarkOpenSnapshot/100k-10         	     100	  10391515 ns/op	        13.22 snap-B/memory	36441064 B/op	     137 allocs/op
+BenchmarkOpenSnapshot/1M-10           	      12	  90579941 ns/op	        13.54 snap-B/memory	360129834 B/op	     291 allocs/op
+BenchmarkOpenSnapshot/1M-10           	      12	  90481941 ns/op	        13.54 snap-B/memory	360129828 B/op	     290 allocs/op
+BenchmarkOpenSnapshot/1M-10           	      13	  90424439 ns/op	        13.54 snap-B/memory	360129778 B/op	     290 allocs/op
+BenchmarkSnapshotWrite/10k-10         	      96	  11997359 ns/op	  694365 B/op	   18504 allocs/op
+BenchmarkSnapshotWrite/10k-10         	      88	  12167038 ns/op	  694363 B/op	   18504 allocs/op
+BenchmarkSnapshotWrite/10k-10         	      98	  12270209 ns/op	  694359 B/op	   18504 allocs/op
+BenchmarkSnapshotWrite/100k-10        	      58	  19218657 ns/op	 7071143 B/op	  197377 allocs/op
+BenchmarkSnapshotWrite/100k-10        	      61	  19070513 ns/op	 7071143 B/op	  197377 allocs/op
+BenchmarkSnapshotWrite/100k-10        	      58	  18908063 ns/op	 7071141 B/op	  197377 allocs/op
+BenchmarkSnapshotWrite/1M-10          	      14	  79121375 ns/op	71042737 B/op	 1996323 allocs/op
+BenchmarkSnapshotWrite/1M-10          	      14	  78105396 ns/op	71042829 B/op	 1996324 allocs/op
+BenchmarkSnapshotWrite/1M-10          	      14	  79332381 ns/op	71042786 B/op	 1996324 allocs/op
+PASS
+ok  	github.com/govinargo-labs/cheesedb/internal/ledger	40.833s

@@ -30,7 +30,7 @@ Deleting that source is not enough. Everything the agent *learned* from it stays
 - **Recall removes exactly what depended on a source.** One call removes the source and every memory built on it, however deep the chain goes. Memories that are still backed by another, independent source survive (`Fair`); or remove everything the source ever touched (`Strict`).
 - **Ask it in plain English.** With an embedding model of your choice, cheesedb finds memories by meaning (`search`), answers questions from them (`ask`), and forgets what you describe after you confirm (`forget`). A recalled memory is never found again. Without a model, everything else works the same.
 - **Erase really erases.** `Recall(..., Erase)` removes the text from the files on disk before it returns. `cheesedb find` searches the raw bytes to prove it.
-- **The history cannot be edited silently.** Every record is chained by hash to the one before. Damage or edits are detected on every open, and erasing text keeps the chain verifiable.
+- **The history cannot be edited silently.** Every record is chained by hash to the one before. `Verify` detects damage or edits anywhere, opening detects them in the records it reads, and erasing text keeps the chain verifiable.
 - **Agents are isolated by design.** Each agent is reached only through its own token. No method takes another agent's name, so a prompt-injected tool holding one agent's handle has no way to reach another.
 - **Embedded and dependency-free.** A Go library and a folder on disk: no server, no external dependencies.
 
@@ -52,6 +52,8 @@ You can model sources and memories in SQL, or as a graph in Neo4j. We did both, 
 
 ¹ A new connection to a server that is already running; booting the Neo4j server took 6.5 to 8.2 s in an earlier run. PostgreSQL and Neo4j ran over TCP on localhost, which adds a round trip to each statement. We wrote the Neo4j model and queries ourselves, and an expert may do better.
 
+These are from the v0.3.0 run, before snapshots. Unreleased snapshots cut cheesedb's startup at 1M memories from about 0.7 s to 90 ms, in a separate run ([BENCHMARKS.md](BENCHMARKS.md)); SQLite still opens about 900x faster.
+
 - **Recall is where it wins.** cheesedb keeps the dependency graph in memory and removes 10,000 memories with one write: about 13x faster than Neo4j, 45x faster than SQLite and 370x faster than PostgreSQL. The SQL versions run several statements for each affected memory. A graph database fits the job better, and Neo4j is the closest competitor, but it is still slower.
 - **The rules live in the engine, not in your code.** No memory without a source, no memory built on a recalled source, recalls are permanent, agents cannot see each other. With SQL or a graph database you write and test these yourself.
 - **Erasure is built in.** In a general database, a deleted row's bytes can stay in the files (free pages, the write-ahead log) until a vacuum or checkpoint. cheesedb's `Erase` rewrites the file without them before it returns.
@@ -60,7 +62,7 @@ You can model sources and memories in SQL, or as a graph in Neo4j. We did both, 
 ### When to use something else
 
 - **You need SQL-style queries, filters or keyword search.** cheesedb finds by id or [by meaning](#ask-in-plain-english). Keep other queries in your database, store only memory ids there, and check each result against cheesedb.
-- **Startup time matters with very long histories.** cheesedb replays its log when it opens an agent: about 0.7 s at 1M memories. SQLite opens instantly. Snapshots are planned.
+- **Startup time matters with very long histories.** cheesedb opens an agent from a snapshot plus the records after it: about 0.09 s at 1M memories (0.7 s with no snapshot). SQLite opens instantly.
 - **An agent's memory does not fit in RAM.** cheesedb keeps about 205 bytes per memory in memory, plus about 0.8 KB per searchable memory (768 values, one byte each).
 - **You need production guarantees today.** cheesedb is a preview; see [Limits](#limits).
 
@@ -278,7 +280,7 @@ The agent is fixed by the command line, and no tool takes an agent, so the model
 Things to know before you rely on it:
 - **The model declares the sources and legs itself.** A recall is only as complete as the legs it wrote, and a prompt-injected model can declare them wrongly or recall things it should not (see [Limits](#limits)).
 - **A model that can also run shell commands as you can skip the tools** and read every agent's files directly. Isolation holds only when the tools are the model's only way to the data. For real separation, the data would have to belong to another OS user, which is what the planned memory server is for.
-- **Each tool call opens the store and closes it again**, so a second app window or the `cheesedb` command can use it in between. The cost is the replay time under [Limits](#limits): small for a young agent, about 0.7 s per call at 1M memories. A `search` also reloads the index: 9 ms at 1,000 memories, 0.74 s at 100,000, 7.5 s at 1M ([How it scales](#how-it-scales)).
+- **Each tool call opens the store and closes it again**, so a second app window or the `cheesedb` command can use it in between. The cost is the open time under [Limits](#limits): small for a young agent, about 0.09 s per call at 1M memories. A `search` also reloads the index: 9 ms at 1,000 memories, 0.74 s at 100,000, 7.5 s at 1M ([How it scales](#how-it-scales)).
 - Data lives in `~/.cheesedb`, or in `CHEESEDB_DIR` if the app starts the command with that variable set, as for every `cheesedb` command.
 
 ## Concepts
@@ -312,6 +314,7 @@ Read these before relying on cheesedb.
   - redact a record.
 
   The files alone cannot reveal any of these. `Verify()` returns a **head fingerprint**: keep a copy somewhere else, and compare it later to detect them. v2 plans signed records and an external witness.
+- **Opening does not re-check old records; `Verify` does.** An agent opens from its snapshot (`state.snap`) and re-reads only the newer records, plus a few checks on the older ones (each segment's size, seal, first and last record). Damage or an edit inside an older segment that keeps its size is found when that record is read, or by `Verify()`, not when the agent opens. Without a snapshot, every open checks every record, as before. Run `Verify()` to check a store you did not watch.
 - **Isolation stops mistakes and prompt injection, not the host program.** A tool or agent holding Alice's handle cannot reach Bob. But the program that holds the store, or anyone with access to the folder as that OS user, can read every agent's files directly.
 - **Tokens are shown once.** The store keeps only a hash of each token. A lost token cannot be recovered; the agent can only be deleted.
 - **Over MCP the model is not trusted, but it is powerful.** It can add lots, declare legs, and recall (and by default erase) anything in its agent. An app that gives the model a shell lets it bypass the tools altogether. See [Use from AI apps](#use-from-ai-apps-mcp).
@@ -329,7 +332,7 @@ Read these before relying on cheesedb.
 - **Damage near the end of an agent's log is cut off, not refused.** A crash can leave a half-written batch (up to about 1 MiB) at the end of the active segment, so `Open` cuts any damage in that last region and reports it in `Report.DroppedBytes`. Real damage there, even one flipped byte, therefore drops every record after it. In a young agent whose log is under 1 MiB, that can be the whole log. Check `Report()` after opening. Sealed segments do not have this weakness: damage there is always `ErrCorrupt`. Batch commit markers could remove it later.
 - **Windows does not flush directories.** Windows rejects `Sync` on a directory handle ("Access is denied"), so `syncDir` is a no-op there: a segment or agent folder created, a rename, or a seal file written just before a crash is not guaranteed on disk when the write returns. NTFS journals metadata, so the entry is usually recovered, but the guarantee is weaker than on macOS and Linux. Windows support remains on the roadmap; see issue #26.
 - **One open store per folder.** `cheesedb.Open` locks the folder; a second process gets `cheesedb.ErrLocked` until the first calls `Close`. The lock works on macOS, Linux, the BSDs and Windows, on a local disk. It may not work on network drives (NFS, SMB), and other systems (for example Solaris, AIX) get no lock.
-- **Startup replays the whole log.** It grows with history: about 0.7 s for an agent with 1M memories ([BENCHMARKS.md](BENCHMARKS.md)).
+- **Startup still grows with history.** From a snapshot, opening an agent with 1M memories takes about 0.09 s; replaying its whole log, which happens when there is no snapshot or it does not match the log, about 0.7 s ([BENCHMARKS.md](BENCHMARKS.md)). A snapshot is written by `Close` once 1,000 records are newer than the last one, and deleted by `Erase` and `Compact`, so the next open after them replays everything once. Old segments are never deleted.
 - **The whole memory graph is kept in RAM:** about 205 bytes per memory. An agent's graph must fit in memory.
 - **About 200 durable writes per second per agent** on the test machine, limited by `fsync`. Different agents write in parallel.
 - **A damaged agent key file stops the whole store from opening.** It is reported rather than skipped, because skipping would hide that agent's data.
@@ -366,7 +369,7 @@ Planned work, roughly in order. Plans can change, and nothing here is a promise 
 - **Sources in the search index,** so `forget` can find a source by description too.
 
 **Scale** (v3)
-- **Snapshots,** so opening an agent loads a saved state and replays only newer records, instead of the whole log.
+- **Deleting old segments after a snapshot** (log truncation), and **snapshots of vector indexes**, so the first search does not replay the whole index. Snapshots of the memory graph are done (unreleased).
 - Concurrent writers across agents, and log-shipping replication checked by the hash chain.
 
 **Under consideration** (candidates we are weighing, not commitments; each needs a design first)
